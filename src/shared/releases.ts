@@ -7,6 +7,12 @@ export interface Release { v: string; date: string; title: string; items: { ws: 
 
 export const RELEASES: Release[] = [
   {
+    v: '0.4.1', date: '2026-10-15', title: 'Fixes',
+    items: [
+      { ws: 'edit', text: 'A clip added under the playhead shows in the viewer straight away, instead of after the first scrub.' },
+    ],
+  },
+  {
     v: '0.4.0', date: '2026-10-15', title: 'One engine for both workspaces',
     items: [
       { ws: 'all', text: 'Process and Edit now share one WebGPU engine: the same colour maths, effects and scopes in both.' },

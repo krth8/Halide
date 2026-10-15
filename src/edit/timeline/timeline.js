@@ -627,6 +627,7 @@ function appendToTimeline(mediaId) {
   }
   const c = addClipAt(mediaId, { kind, trackIndex: 0, start });
   if (c) selectClip(c.id);
+  engine.seek(state.playhead);   // show the new clip if it lands under the playhead
 }
 
 // tap-to-add clip picker (mobile/tablet); stylus/desktop can still drag the pool
@@ -717,6 +718,7 @@ function poolPointerDrag(m, e, thumb) {
       const start2 = Math.max(0, snap((ev.clientX - el('tlInner').getBoundingClientRect().left) / pxPerSec));
       const clip = addClipAt(m.id, { kind: track.dataset.kind, trackIndex: +track.dataset.index, start: start2 });
       if (clip) selectClip(clip.id);
+      engine.seek(state.playhead);
     }
   };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', cancel);
