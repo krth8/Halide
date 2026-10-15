@@ -8,6 +8,7 @@
   --raise: #211e1b;
   --card: #1d1a17;      /* tool sections inside the panel */
   --line: #2f2a25;
+  --track: #2f2a25;     /* slider rail */
   --fg: #ece5d9;
   --muted: #968c80;
   --faint: #6d655c;
@@ -187,8 +188,8 @@ input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; hei
 .row.drag input[type=range]::-webkit-slider-thumb { transform: scale(1.25); }
 .row.drag input[type=range]::-moz-range-thumb { transform: scale(1.25); }
 .scope-item input[type=range] { --fill: var(--ovr); }
-input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(90deg, var(--line) var(--a), var(--fill) var(--a) var(--b), var(--line) var(--b)); }
-input[type=range]::-moz-range-track { height: 3px; border-radius: 2px; background: linear-gradient(90deg, var(--line) var(--a), var(--fill) var(--a) var(--b), var(--line) var(--b)); }
+input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(90deg, var(--track) var(--a), var(--fill) var(--a) var(--b), var(--track) var(--b)); }
+input[type=range]::-moz-range-track { height: 3px; border-radius: 2px; background: linear-gradient(90deg, var(--track) var(--a), var(--fill) var(--a) var(--b), var(--track) var(--b)); }
 input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--fg); margin-top: -7.5px; border: 3px solid var(--panel); }
 input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--fg); border: 3px solid var(--panel); }
 

@@ -7,6 +7,12 @@ export interface Release { v: string; date: string; title: string; items: { ws: 
 
 export const RELEASES: Release[] = [
   {
+    v: '0.3.2', date: '2026-10-15', title: 'Fixes',
+    items: [
+      { ws: 'process', text: 'Slider rails are visible again — only the coloured part showed.' },
+    ],
+  },
+  {
     v: '0.3.1', date: '2026-10-15', title: 'Smoother project management',
     items: [
       { ws: 'all', text: 'Rename projects right on their card, and undo a delete from the message that follows.' },

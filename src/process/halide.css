@@ -8,6 +8,7 @@
   --raise: var(--hl-raise);
   --card: rgba(255, 255, 255, .04);
   --line: var(--hl-stroke);
+  --track: var(--hl-track);
   --fg: var(--hl-text);
   --muted: var(--hl-muted);
   --faint: var(--hl-faint);
@@ -36,6 +37,7 @@ body { background: var(--hl-backdrop) fixed, var(--hl-base); }
 .btn, .ib, .frame, .seg button.on { box-shadow: var(--hl-hi); }
 .btn:hover, .ib:hover { background: var(--hl-hover); }
 input[type=text], input[type=number], select { box-shadow: var(--hl-inset); }
+.menu button:hover { background: var(--hl-hover); }
 
 /* primary actions carry the Halide gradient */
 .btn.primary, .ib.primary { background: var(--hl-accent-grad); border-color: transparent; color: var(--hl-accent-ink); }
