@@ -1,5 +1,6 @@
 // Media tab: import, media-pool grid, inspector, proxy queue.
 import { state, addMedia, getMedia, appendClip, bus } from '../state.js';
+import { confirmDialog } from '../../shared/dialog.ts';
 import { el, $$, fmtShort, fmtTC, toast, uid, clamp } from '../util.js';
 import { probe, makeStrip } from '../media/probe.js';
 import { makeProxy, codecSupport, analyzeProxy } from '../media/proxy.js';
@@ -105,7 +106,7 @@ export async function initMedia(eng) {
   updateCacheStat();
   const pc = el('proxyClear');
   if (pc) pc.onclick = async () => {
-    if (!confirm('Clear the proxy cache? Loaded proxies keep working; missing ones rebuild on demand.')) return;
+    if (!(await confirmDialog({ title: 'Clear the proxy cache?', body: 'Loaded proxies keep working; missing ones rebuild on demand.', ok: 'Clear cache' }))) return;
     const ok = await clearProxies();
     toast(ok ? 'Proxy cache cleared' : 'Could not clear cache', !ok);
     updateCacheStat();

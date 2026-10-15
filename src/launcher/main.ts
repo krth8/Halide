@@ -5,6 +5,7 @@ import { BASE } from '../shared/paths';
 import { halideMark, PROCESS_GLYPH, EDIT_GLYPH } from '../shared/brand';
 import { listProjects, renameProject, duplicateProject, deleteProject, workspaceUrl, type ProjectMeta, type Workspace } from '../shared/projects';
 import { RELEASES, semverGt, type Tag } from '../shared/releases';
+import { toast } from '../shared/dialog';
 
 const $ = (id: string) => document.getElementById(id)!;
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -30,8 +31,60 @@ const countLabel = (p: ProjectMeta) => p.ws === 'edit'
   ? `${p.count} clip${p.count === 1 ? '' : 's'}`
   : `${p.count} item${p.count === 1 ? '' : 's'}`;
 
+// deleted projects wait out their Undo before they're really gone
+const deleting = new Map<string, number>();
+async function commitDelete(id: string) {
+  clearTimeout(deleting.get(id));
+  deleting.delete(id);
+  await deleteProject(id).catch(() => {});
+}
+addEventListener('pagehide', () => { for (const id of [...deleting.keys()]) commitDelete(id); });
+
+function remove(p: ProjectMeta) {
+  deleting.set(p.id, window.setTimeout(() => { commitDelete(p.id).then(renderProjects); }, 6000));
+  renderProjects();
+  toast(`Deleted “${p.name}”`, {
+    ms: 6000,
+    action: { label: 'Undo', run: () => { clearTimeout(deleting.get(p.id)); deleting.delete(p.id); renderProjects(); } },
+  });
+}
+
+/** Turns the card's name into a text field: Enter or leaving it saves, Esc cancels. */
+function rename(card: HTMLElement, p: ProjectMeta) {
+  const label = card.querySelector('.name');
+  if (!label) return;
+  const inp = document.createElement('input');
+  inp.className = 'rename';
+  inp.value = p.name;
+  inp.maxLength = 80;
+  inp.setAttribute('aria-label', 'Project name');
+  label.replaceWith(inp);
+  card.classList.add('renaming');
+  inp.focus();
+  inp.select();
+  let done = false;
+  const finish = async (save: boolean) => {
+    if (done) return;
+    done = true;
+    const name = inp.value.trim();
+    if (save && name && name !== p.name) {
+      await renameProject(p.id, name);
+      toast(`Renamed to “${name}”`);
+    }
+    renderProjects();
+  };
+  inp.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  inp.addEventListener('blur', () => finish(true));
+  // the card is a link: clicks in the field must not open the project
+  inp.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
+}
+
 async function renderProjects(): Promise<void> {
-  const all = await listProjects().catch(() => [] as ProjectMeta[]);
+  const all = (await listProjects().catch(() => [] as ProjectMeta[])).filter((p) => !deleting.has(p.id));
   $('recent').hidden = !all.length;
   document.querySelectorAll<HTMLButtonElement>('#filter button').forEach((b) => b.classList.toggle('on', b.dataset.f === filter));
   const shown = all.filter((p) => filter === 'all' || p.ws === filter);
@@ -54,16 +107,9 @@ async function renderProjects(): Promise<void> {
     a.querySelector('.acts')!.addEventListener('click', async (e) => {
       e.preventDefault(); e.stopPropagation();
       const act = (e.target as HTMLElement).closest('button')?.dataset.a;
-      if (act === 'rename') {
-        const name = prompt('Rename project', p.name);
-        if (name === null) return;
-        await renameProject(p.id, name.trim() || p.name);
-      } else if (act === 'dup') await duplicateProject(p.id);
-      else if (act === 'del') {
-        if (!confirm(`Delete “${p.name}”? Your photos and videos are not touched — only the project.`)) return;
-        await deleteProject(p.id);
-      } else return;
-      renderProjects();
+      if (act === 'rename') rename(a, p);
+      else if (act === 'dup') { await duplicateProject(p.id); toast(`Duplicated “${p.name}”`); renderProjects(); }
+      else if (act === 'del') remove(p);
     });
     grid.appendChild(a);
   }

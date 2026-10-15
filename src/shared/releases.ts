@@ -7,6 +7,13 @@ export interface Release { v: string; date: string; title: string; items: { ws: 
 
 export const RELEASES: Release[] = [
   {
+    v: '0.3.1', date: '2026-10-15', title: 'Smoother project management',
+    items: [
+      { ws: 'all', text: 'Rename projects right on their card, and undo a delete from the message that follows.' },
+      { ws: 'edit', text: 'Clearing the proxy cache asks in Halide’s own dialog.' },
+    ],
+  },
+  {
     v: '0.3.0', date: '2026-10-15', title: 'RAW photos',
     items: [
       { ws: 'process', text: 'Open RAW photos straight from the camera — CR3, CR2, NEF, ARW, DNG, RAF, ORF, RW2 and many more. Thumbnails appear at once, and RAW files are developed with the camera’s white balance and colour.' },

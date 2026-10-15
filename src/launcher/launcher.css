@@ -1,13 +1,17 @@
 /* Launcher: the Halide wordmark over one glass panel split into the two
    workspaces. Side by side on wide screens, stacked on narrow ones. */
 * { box-sizing: border-box; }
-html, body { height: 100%; margin: 0; }
+html, body { margin: 0; }
+/* the page scrolls on html, so the backdrop sits there (on a scrolling body
+   the fixed backdrop stopped at the first screen's height) */
+html { min-height: 100%; background: var(--hl-backdrop) fixed, var(--hl-base); }
 body {
+  min-height: 100vh; background: transparent;
   color: var(--hl-text); font: 15px/1.45 var(--hl-font);
-  -webkit-tap-highlight-color: transparent; overflow: auto;
+  -webkit-tap-highlight-color: transparent;
 }
 .launch {
-  min-height: 100%; display: flex; flex-direction: column; align-items: center; gap: 38px;
+  min-height: 100vh; display: flex; flex-direction: column; align-items: center; gap: 38px;
   padding: calc(env(safe-area-inset-top, 0px) + max(40px, 9vh)) 20px calc(env(safe-area-inset-bottom, 0px) + 28px);
 }
 
@@ -91,6 +95,12 @@ body {
 .card .thumb .ws.edit { background: rgba(92, 52, 72, .7); }
 .card .name { font-weight: 650; font-size: 14px; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .meta { font: 12px var(--hl-num); color: var(--hl-muted); padding: 0 4px; }
+.card .rename {
+  font: 650 14px var(--hl-font); color: var(--hl-text); width: 100%; margin: -3px 0 -2px; padding: 3px 4px; border: 0; outline: 0;
+  border-radius: 7px; background: var(--hl-well); box-shadow: var(--hl-inset), 0 0 0 2px var(--hl-accent-bg); user-select: text;
+}
+.card.renaming { transform: none; }
+.card.renaming .acts { display: none; }
 .card .acts { position: absolute; right: 13px; top: 13px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .card:hover .acts, .card:focus-within .acts { opacity: 1; }
 @media (hover: none) { .card .acts { opacity: 1; } }
