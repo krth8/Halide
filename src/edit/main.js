@@ -1,6 +1,7 @@
 import { boot as bootHalide } from '../shared/boot.ts';
 bootHalide({ isolate: true });
 import { homeLink } from '../shared/brand.ts';
+import { drawScopes as drawSharedScopes } from '../shared/scopes.ts';
 // Bootstrap: WebGPU renderer + playback engine + tab wiring + transport + keys.
 import { state, bus, timelineDuration, videoProgram, addTitle, toggleMarker, rippleDelete, appendClip, defaultGrade, findClipRef, clipEnd } from './state.js';
 import { el, $$, fmtTC, toast } from './util.js';
@@ -430,97 +431,8 @@ function onFrameDrawn() {
   try { drawScopes(src); } catch {}
 }
 
-const tmp = document.createElement('canvas');
-// size a canvas only when it actually changed — reassigning width every pass
-// reallocates the backing store and stalls the raster pipeline
-const sizeC = (c, w, h) => { if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } };
 function drawScopes(src) {
-  const sw = 200, sh = 112;
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  sizeC(tmp, sw, sh);
-  const cx = tmp.getContext('2d', { willReadFrequently: true });
-  cx.drawImage(src, 0, 0, sw, sh);
-  const data = cx.getImageData(0, 0, sw, sh).data;
-
-  // waveform (luma per column) — offsetParent null = collapsed, skip the work.
-  // Plotted by accumulating into an ImageData and blitting once: the previous
-  // one-fillRect-per-sample version was ~11k canvas calls per pass (the parade
-  // 3×that) and dominated the playback profile on the Color tab.
-  const wf = el('scopeWave');
-  if (wf.offsetParent) {
-    const W2 = 180, H2 = 70;
-    sizeC(wf, W2, H2);
-    const wc = wf.getContext('2d');
-    const img = wc.createImageData(W2, H2), d8 = img.data;
-    for (let p = 0; p < d8.length; p += 4) { d8[p] = 10; d8[p + 1] = 10; d8[p + 2] = 12; d8[p + 3] = 255; }
-    for (let x = 0; x < sw; x++) {
-      const px = ((x / sw) * W2) | 0;
-      for (let y = 0; y < sh; y += 2) {
-        const i = (y * sw + x) * 4;
-        const l = (data[i] * 0.2126 + data[i + 1] * 0.7152 + data[i + 2] * 0.0722) / 255;
-        const p = ((((1 - l) * (H2 - 1)) | 0) * W2 + px) * 4;
-        d8[p] = Math.min(255, d8[p] + 60); d8[p + 1] = Math.min(255, d8[p + 1] + 115); d8[p + 2] = Math.min(255, d8[p + 2] + 85);
-      }
-    }
-    wc.putImageData(img, 0, 0);
-  }
-  // RGB parade — R, G, B waveforms side by side (same accumulate-once scheme)
-  const pd = el('scopeParade');
-  if (pd && pd.offsetParent) {
-    const W2 = 180, H2 = 70, seg = W2 / 3;
-    sizeC(pd, W2, H2);
-    const pc = pd.getContext('2d');
-    const img = pc.createImageData(W2, H2), d8 = img.data;
-    for (let p = 0; p < d8.length; p += 4) { d8[p] = 10; d8[p + 1] = 10; d8[p + 2] = 12; d8[p + 3] = 255; }
-    const add = [[128, 40, 40], [45, 115, 60], [55, 75, 128]];
-    for (let ch = 0; ch < 3; ch++) {
-      const a = add[ch], x0 = ch * seg;
-      for (let x = 0; x < sw; x++) {
-        const px = (x0 + (x / sw) * seg) | 0;
-        for (let y = 0; y < sh; y += 2) {
-          const i = (y * sw + x) * 4;
-          const p = ((((1 - data[i + ch] / 255) * (H2 - 1)) | 0) * W2 + px) * 4;
-          d8[p] = Math.min(255, d8[p] + a[0]); d8[p + 1] = Math.min(255, d8[p + 1] + a[1]); d8[p + 2] = Math.min(255, d8[p + 2] + a[2]);
-        }
-      }
-    }
-    pc.putImageData(img, 0, 0);
-  }
-
-  // Vectorscope — chroma on the U/V plane (colour balance + saturation)
-  const vs = el('scopeVector');
-  if (vs && vs.offsetParent) {
-    const S = Math.round(80 * dpr); sizeC(vs, S, S);
-    const vc = vs.getContext('2d'); vc.fillStyle = '#0a0a0c'; vc.fillRect(0, 0, S, S);
-    vc.strokeStyle = 'rgba(255,255,255,.08)'; vc.beginPath(); vc.arc(S / 2, S / 2, S / 2 - 2, 0, 7); vc.stroke();
-    vc.beginPath(); vc.moveTo(S / 2, 4); vc.lineTo(S / 2, S - 4); vc.moveTo(4, S / 2); vc.lineTo(S - 4, S / 2); vc.stroke();
-    const img = vc.getImageData(0, 0, S, S); const px = img.data;
-    for (let i = 0; i < data.length; i += 8) {
-      const r = data[i] / 255, g = data[i + 1] / 255, b = data[i + 2] / 255;
-      const u = -0.169 * r - 0.331 * g + 0.5 * b;
-      const v = 0.5 * r - 0.419 * g - 0.081 * b;
-      const x = Math.round(S / 2 + u * (S - 6)), y = Math.round(S / 2 - v * (S - 6));
-      if (x < 0 || y < 0 || x >= S || y >= S) continue;
-      const p = (y * S + x) * 4;
-      px[p] = Math.min(255, px[p] + 60); px[p + 1] = Math.min(255, px[p + 1] + 200); px[p + 2] = Math.min(255, px[p + 2] + 90); px[p + 3] = 255;
-    }
-    vc.putImageData(img, 0, 0);
-  }
-
-  // histogram
-  const hg = el('scopeHist');
-  if (hg.offsetParent) {
-    sizeC(hg, 180 * dpr, 70 * dpr);
-    const hc = hg.getContext('2d'); hc.setTransform(1, 0, 0, 1, 0, 0); hc.scale(dpr, dpr);
-    hc.fillStyle = '#0a0a0c'; hc.fillRect(0, 0, 180, 70);
-    const bins = [new Uint32Array(64), new Uint32Array(64), new Uint32Array(64)];
-    for (let i = 0; i < data.length; i += 4) { bins[0][data[i] >> 2]++; bins[1][data[i + 1] >> 2]++; bins[2][data[i + 2] >> 2]++; }
-    const max = Math.max(...bins.flatMap((b) => [...b])) || 1;
-    const cols = ['rgba(255,90,90,.6)', 'rgba(120,230,120,.6)', 'rgba(120,150,255,.6)'];
-    hc.globalCompositeOperation = 'lighter';
-    bins.forEach((b, ci) => { hc.fillStyle = cols[ci]; for (let i = 0; i < 64; i++) { const h = (b[i] / max) * 70; hc.fillRect((i / 64) * 180, 70 - h, 180 / 64, h); } });
-    hc.globalCompositeOperation = 'source-over';
-  }
+  drawSharedScopes(src, { wave: el('scopeWave'), parade: el('scopeParade'), vector: el('scopeVector'), hist: el('scopeHist') });
 }
 
 boot();

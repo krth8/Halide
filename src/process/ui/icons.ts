@@ -3,6 +3,7 @@ import { h } from './dom';
 /** Line icons on a 24×24 grid (stroke = currentColor). */
 const P = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 export const I = {
+  scopes: P('<path d="M3 20V4M3 20h18"/><path d="M6 16l3-5 3 3 4-7 3 5"/>'),
   open: P('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/>'),
   export: P('<path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/>'),
   reset: P('<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v5h5"/>'),

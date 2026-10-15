@@ -9,6 +9,9 @@ import type { Item } from '../model';
 const view = $<HTMLCanvasElement>('#view');
 const stage = $('#stage');
 export const R = new Renderer(view);
+/** Called right after each preview render, in the same task (scopes read the canvas then). */
+let afterRender: (() => void) | null = null;
+export const onRendered = (fn: () => void) => { afterRender = fn; };
 
 let srcFor: Item | null = null;      // whose pixels are currently on the GPU
 let srcIsPreview = false;
@@ -58,7 +61,9 @@ function paint() {
   placeGrid();
   placeMaskOverlay();
   R.render(P, w, hh, { bypass: S.showBefore, lut: lutById(P.lut.id), seed: it.kind === 'video' && video && !video.paused ? ++seed : it.id, masks: it.masks, corr });
+  afterRender?.();
 }
+export const isPlaying = () => !!video && !video.paused;
 
 async function ensureImage(it: Item) {
   if (srcFor === it && srcIsPreview) return;

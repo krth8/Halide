@@ -13,6 +13,7 @@ import { $, h, isPhone, toast } from './ui/dom';
 import { buildReel, refresh, setAddHandler, setRemoveHandler } from './ui/reel';
 import { build } from './ui/panel';
 import { draw } from './ui/stage';
+import { initScopes } from './ui/scopes';
 import { gpuOk } from './gpu/renderer';
 import { openExport } from './ui/exportSheet';
 
@@ -200,6 +201,7 @@ if (!gpuOk) {
 await restore();
 updateTop();
 build();
+initScopes();
 draw();
 
 // ?p=<id>: reopen that project — thumbnails first, then every file whose
