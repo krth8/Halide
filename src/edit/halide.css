@@ -48,10 +48,9 @@ header {
 }
 :root[data-layout="narrow"] .side,
 :root[data-layout="narrow"] .side-r,
-.clip-picker, .proj-pop, .splash {
+.clip-picker, .proj-pop {
   -webkit-backdrop-filter: var(--hl-blur); backdrop-filter: var(--hl-blur);
 }
-.overlay.splash-scrim { background: rgba(6, 5, 10, .55); }
 
 /* shading instead of outlines: wells sink, raised controls catch light */
 .main-tabs, .side-tabs, .color-sub, .pool-toggle { background: var(--hl-well); box-shadow: var(--hl-inset); }
@@ -64,11 +63,9 @@ input[type=checkbox] { box-shadow: var(--hl-inset); background: var(--hl-raise);
 .pv-canvas { background: var(--hl-picture); }
 
 /* primary actions carry the Halide gradient */
-button.accent, #projNew, .btn-tp.play.playing { background: var(--hl-accent-grad); color: var(--hl-accent-ink); }
-button.accent:hover, #projNew:hover { filter: brightness(1.08); }
+button.accent, .btn-tp.play.playing { background: var(--hl-accent-grad); color: var(--hl-accent-ink); }
+button.accent:hover { filter: brightness(1.08); }
 
 /* header: Halide home mark in place of the old brand */
 .brand .hl-home { margin-left: -6px; }
 :root[data-layout="narrow"] .hl-home b { display: none; }
-.splash-brand span { display: flex; flex-direction: column; line-height: 1; }
-.splash-brand .hl-over { font-size: 11px; letter-spacing: .3em; color: var(--hl-muted); font-weight: 800; margin-bottom: 4px; }

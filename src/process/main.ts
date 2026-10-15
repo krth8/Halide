@@ -203,7 +203,8 @@ if (await openProject(makeItem)) {
   await cameOnline(await connect(false));
 }
 
-boot();
+// isolated: LibRaw's threads (RAW photos) need shared WebAssembly memory
+boot({ isolate: true });
 document.getElementById('hlHome')?.replaceWith(homeLink('Process'));
 // Fetch the video module once so the service worker has it for offline use.
 if (import.meta.env.PROD) setTimeout(() => import('mediabunny').catch(() => {}), 4000);

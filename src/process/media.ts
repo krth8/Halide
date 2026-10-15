@@ -1,10 +1,11 @@
 import type { Item, Kind } from './model';
+import { isRaw, rawDecode, rawThumb, RAW_EXTENSIONS } from './raw';
 
 const IMG = /\.(jpe?g|png|webp|avif|heic|heif|gif|bmp|tiff?)$/i;
 const VID = /\.(mov|mp4|m4v|webm|mkv|3gp)$/i;
 
 export function kindOf(f: File): Kind | null {
-  if (f.type.startsWith('image/') || IMG.test(f.name)) return 'image';
+  if (f.type.startsWith('image/') || IMG.test(f.name) || isRaw(f)) return 'image';
   if (f.type.startsWith('video/') || VID.test(f.name)) return 'video';
   return null;
 }
@@ -36,7 +37,14 @@ function decodeError(it: Item, e: unknown): string {
 /** Reads dimensions, a thumbnail and (for video) duration. Full-size decoding is done lazily. */
 export async function loadItem(it: Item): Promise<void> {
   try {
-    if (it.kind === 'image') {
+    if (it.kind === 'image' && isRaw(it.file)) {
+      // the camera's embedded preview: no RAW decode for the thumbnail
+      const r = await rawThumb(it.file);
+      it.width = r.width; it.height = r.height;
+      const [tw, th] = fit(r.thumb.width, r.thumb.height, THUMB);
+      it.thumb = await createImageBitmap(r.thumb, { resizeWidth: tw, resizeHeight: th, resizeQuality: 'high' });
+      r.thumb.close();
+    } else if (it.kind === 'image') {
       const full = await createImageBitmap(it.file);
       it.width = full.width; it.height = full.height;
       const [tw, th] = fit(full.width, full.height, THUMB);
@@ -104,6 +112,7 @@ export async function decodeFull(it: Item): Promise<ImageBitmap> {
     it.file = f;
     return f;
   };
+  if (isRaw(it.file)) return rawDecode(it.file);
   const tries: (() => Promise<ImageBitmap>)[] = [
     () => createImageBitmap(it.file),
     async () => createImageBitmap(new Blob([await it.file.arrayBuffer()], { type: it.file.type })),
@@ -125,7 +134,8 @@ export function loadPreview(it: Item): Promise<ImageBitmap> {
   let p = previews.get(it);
   if (p) { previews.delete(it); previews.set(it, p); return p; }
   p = (async () => {
-    const full = await createImageBitmap(it.file);
+    // RAW: a half-size develop is plenty for a ≤ 2048 px preview
+    const full = isRaw(it.file) ? await rawDecode(it.file, { half: true }) : await createImageBitmap(it.file);
     const [w, h] = fit(full.width, full.height, PREVIEW);
     if (w === full.width) return full;
     const bm = await createImageBitmap(full, { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' });
@@ -216,7 +226,7 @@ export async function pickDirectory(): Promise<Picked | null> {
 const PICK_TYPES = [{
   description: 'Photos and videos',
   accept: {
-    'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.avif', '.heic', '.heif', '.gif', '.bmp', '.tif', '.tiff'],
+    'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.avif', '.heic', '.heif', '.gif', '.bmp', '.tif', '.tiff', ...RAW_EXTENSIONS],
     'video/*': ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.3gp'],
   },
 }];
@@ -239,7 +249,7 @@ export async function pickFiles(folder = false): Promise<Picked | null> {
     const inp = document.createElement('input');
     inp.type = 'file';
     inp.multiple = true;
-    inp.accept = 'image/*,video/*,.heic,.heif,.mov';
+    inp.accept = ['image/*', 'video/*', '.heic', '.heif', '.mov', ...RAW_EXTENSIONS].join(',');
     if (folder) (inp as any).webkitdirectory = true;
     inp.onchange = () => {
       const files = [...(inp.files || [])].filter(kindOf).sort(byName);
