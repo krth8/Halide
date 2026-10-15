@@ -2,6 +2,7 @@
 import { makeBus, uid } from './util.js';
 import { defaultTitle } from './timeline/title.js';
 import { FX, fxOn } from './fx/index.js';
+import { STILL_SECONDS } from './media/still.js';
 
 export const bus = makeBus();
 
@@ -218,7 +219,8 @@ export function addClipAt(mediaId, { kind = 'video', trackIndex = 0, start = 0, 
   const m = getMedia(mediaId); if (!m) return null;
   const list = trackListFor(kind);
   if (kind === 'video') ensureVideoTracks(trackIndex + 1); else ensureAudioTracks(trackIndex + 1);
-  const c = makeClip(mediaId, { kind, start, in: inS, out: outS == null ? (m.duration || 5) : outS });
+  const still = m.kind === 'image';
+  const c = makeClip(mediaId, { kind, start, in: inS, out: outS == null ? (still ? inS + STILL_SECONDS : (m.duration || 5)) : outS, type: still ? 'still' : undefined });
   list[trackIndex].clips.push(c);
   resolveOverwrite(list[trackIndex], c);
   const g = defaultGrade();

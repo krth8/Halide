@@ -1,3 +1,4 @@
+import { stillBitmapAsync } from '../media/still.js';
 // Export tab: render the graded timeline frame-by-frame through the WebGPU
 // pipeline, encode with WebCodecs VideoEncoder, mux to MP4 (mp4-muxer).
 import { state, timelineDuration, programAt, srcTimeAt, videoProgram, getMedia, fadeGainAt, defaultTransform, effectiveTransform, layersAt, populatedVideoTracks, transitionAt, clipTLDur, PROJECT_ASPECTS, bus } from '../state.js';
@@ -150,7 +151,7 @@ async function render() {
   {
     const need = [], missing = new Set();
     for (const tr of state.tracks.video) for (const c of tr.clips) {
-      if (c.type === 'title') continue;
+      if (c.type === 'title' || c.type === 'still') continue;   // stills decode straight from the file
       const m = getMedia(c.mediaId); if (!m) continue;
       if (m.playable && m.url) continue;             // WebCodecs/native path
       if (!m.file) { missing.add(m.name); continue; }
@@ -254,6 +255,10 @@ async function render() {
   };
   // drawable source for a clip: rendered title canvas or a seeked video frame
   const sourceFrame = async (clip, t) => {
+    if (clip.type === 'still') {
+      const bmp = await stillBitmapAsync(getMedia(clip.mediaId), Math.max(W, H));
+      return bmp ? { source: bmp, w: bmp.width, h: bmp.height } : null;
+    }
     if (clip.type === 'title') { const cv = renderTitleCanvas(clip.title, W, H, { tl: Math.max(0, t - clip.start), dur: clipTLDur(clip) }); return { source: cv, w: cv.width, h: cv.height }; }
     const v = await layerFrame(clip, t); if (!v || !v.videoWidth) return null;
     return { source: v, w: v.videoWidth, h: v.videoHeight };
@@ -295,6 +300,16 @@ async function render() {
         continue;
       }
       const seg = programAt(t);
+      if (seg && seg.clip.type === 'still') {
+        renderer.beginComposite(); applyGrade(seg.clip, t);
+        const s = await sourceFrame(seg.clip, t);
+        if (s) renderer.drawLayer(s.source, s.w, s.h);
+        const frame = new VideoFrame(canvas, { timestamp: Math.round((f * 1e6) / fps), duration: Math.round(1e6 / fps) });
+        encoder.encode(frame, { keyFrame: f % (fps * 2) === 0 }); frame.close();
+        if (f % 4 === 0 || f === total - 1) { bar.style.width = ((f / total) * 100).toFixed(1) + '%'; status.textContent = `Rendering ${f + 1}/${total} frames…`; await new Promise((r) => setTimeout(r)); }
+        if (encErr) throw encErr;
+        continue;
+      }
       if (seg && seg.clip.type === 'title') {
         renderer.beginComposite(); applyGrade(seg.clip, t);
         const cv = renderTitleCanvas(seg.clip.title, W, H, { tl: Math.max(0, t - seg.clip.start), dur: clipTLDur(seg.clip) }); renderer.drawLayer(cv, cv.width, cv.height);

@@ -7,6 +7,16 @@ export interface Release { v: string; date: string; title: string; items: { ws: 
 
 export const RELEASES: Release[] = [
   {
+    v: '0.4.0', date: '2026-10-15', title: 'One engine for both workspaces',
+    items: [
+      { ws: 'all', text: 'Process and Edit now share one WebGPU engine: the same colour maths, effects and scopes in both.' },
+      { ws: 'edit', text: 'New effects from Process: Grain, Halation, Blur (tilt-shift, radial or whole frame), Clarity, Texture and Dehaze. Glow uses the smoother multi-step bloom.' },
+      { ws: 'edit', text: 'Put photos on the timeline — JPEG, PNG, HEIC and camera RAW (CR3, NEF, ARW, DNG…). A photo plays for 5 seconds and can be stretched to any length.' },
+      { ws: 'process', text: 'Scopes: histogram, waveform, RGB parade and vectorscope, from the button in the header.' },
+      { ws: 'process', text: 'Rendering moved to WebGPU — the same look, now on the engine Edit uses.' },
+    ],
+  },
+  {
     v: '0.3.2', date: '2026-10-15', title: 'Fixes',
     items: [
       { ws: 'process', text: 'Slider rails are visible again — only the coloured part showed.' },

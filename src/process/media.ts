@@ -1,5 +1,5 @@
 import type { Item, Kind } from './model';
-import { isRaw, rawDecode, rawThumb, RAW_EXTENSIONS } from './raw';
+import { isRaw, rawDecode, rawThumb, RAW_EXTENSIONS } from '../shared/media/raw';
 
 const IMG = /\.(jpe?g|png|webp|avif|heic|heif|gif|bmp|tiff?)$/i;
 const VID = /\.(mov|mp4|m4v|webm|mkv|3gp)$/i;

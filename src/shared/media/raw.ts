@@ -1,11 +1,11 @@
-// RAW photos — CR3, CR2, NEF, ARW, DNG, RAF, ORF, RW2 and ~1000 cameras more —
+// RAW photos — shared by Process (photos) and Edit (stills on the timeline): CR3, CR2, NEF, ARW, DNG, RAF, ORF, RW2 and ~1000 cameras more —
 // through LibRaw compiled to WebAssembly (public/vendor/libraw). It loads on the
 // first RAW file and decodes in its own worker, off the main thread.
 //
 // Three costs, three uses: the embedded camera JPEG for thumbnails (no RAW
 // decode at all), a half-size decode for the on-screen preview, and the full
 // decode only at export.
-import { asset } from '../shared/paths';
+import { asset } from '../paths';
 
 const EXT = ['3fr', 'ari', 'arw', 'bay', 'cr2', 'cr3', 'crw', 'dcr', 'dcs', 'dng', 'erf', 'fff', 'gpr', 'iiq', 'k25', 'kdc', 'mef', 'mos',
   'mrw', 'nef', 'nrw', 'orf', 'pef', 'raf', 'raw', 'rw2', 'rwl', 'sr2', 'srf', 'srw', 'x3f'];

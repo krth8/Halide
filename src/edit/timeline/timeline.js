@@ -523,7 +523,7 @@ function buildClip(c, kind) {
     + (c.transIn > 0 ? `<span class="trans-mark" style="width:${c.transIn * pxPerSec}px"></span>` : '')
     + ((c.keyframes && c.keyframes.length) ? c.keyframes.map((k) => `<span class="kf-mark" style="left:${k.t * pxPerSec}px"></span>`).join('') : '')
     + `<span class="tl-edge l"></span><span class="tl-edge r"></span>`;
-  if (!c.mute && !isTitle) attachWave(d, c, m, kind);
+  if (!c.mute && !isTitle && c.type !== 'still') attachWave(d, c, m, kind);
   d.querySelector('.tl-edge.l').addEventListener('pointerdown', (e) => { e.stopPropagation(); selectClip(c.id); edgeTrim(c.id, 'l', e); });
   d.querySelector('.tl-edge.r').addEventListener('pointerdown', (e) => { e.stopPropagation(); selectClip(c.id); edgeTrim(c.id, 'r', e); });
   d.querySelector('.fade-h.in').addEventListener('pointerdown', (e) => { e.stopPropagation(); selectClip(c.id); fadeDrag(c, 'in', e); });
@@ -812,7 +812,7 @@ export function renderInspector() {
       ${sr('Dissolve in', 'ins_transIn', 0, 2, 0.05, c.transIn || 0, (c.transIn || 0).toFixed(2) + ' s', 0)}
       <p class="statline" style="margin:6px 0 0">Cross-dissolves from the previous clip on this track.</p>
     </details>`}
-    ${isTitle ? `<details class="ins-grp" open><summary>Fade</summary>
+    ${isTitle || c.type === 'still' ? `<details class="ins-grp" open><summary>Fade</summary>
       ${sr('Fade in', 'ins_fadeIn', 0, 5, 0.05, c.fadeIn || 0, (c.fadeIn || 0).toFixed(2) + ' s', 0)}
       ${sr('Fade out', 'ins_fadeOut', 0, 5, 0.05, c.fadeOut || 0, (c.fadeOut || 0).toFixed(2) + ' s', 0)}
     </details>` : `<details class="ins-grp" open><summary>Speed &amp; audio</summary>

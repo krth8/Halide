@@ -6,6 +6,7 @@ import { probe, makeStrip } from '../media/probe.js';
 import { makeProxy, codecSupport, analyzeProxy } from '../media/proxy.js';
 import { demuxHeader } from '../media/demux.js';
 import { pickMedia, pickFolder, isMediaFile, isAudioFile, handleMap, pathMap } from '../media/pick.js';
+import { isStillFile, probeStill, STILL_SOURCE, forgetStill } from '../media/still.js';
 import { proxyKey, isCurrentProxyKey, loadProxy, saveProxy, proxyBytes, clearProxies } from '../store.js';
 import { findLut, LUT_CATEGORIES } from '../luts.js';
 import { ffmpegLoaded, ffmpegMultithread, abortTranscode } from '../media/ffmpeg.js';
@@ -148,9 +149,10 @@ function audioDuration(url) {
 async function importFiles(files, { explicit = true } = {}) {
   files = [...files];
   const isVid = (f) => f.type.startsWith('video') || VIDEO_EXT.test(f.name);
-  const keep = files.filter((f) => isVid(f) || (explicit && isAudioFile(f)));
+  // stills (photos, RAW) come along when picked; a folder sweep takes them too
+  const keep = files.filter((f) => isVid(f) || isStillFile(f) || (explicit && isAudioFile(f)));
   const skipped = files.length - keep.length;
-  if (!keep.length) return toast(skipped ? 'No video or audio files in the selection' : 'No files selected', true);
+  if (!keep.length) return toast(skipped ? 'No video, photo or audio files in the selection' : 'No files selected', true);
   if (skipped) toast(`${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped`);
   const vids = keep;
 
@@ -168,13 +170,15 @@ async function importFiles(files, { explicit = true } = {}) {
       continue;
     }
     const audioOnly = isAudioFile(file);
+    const still = !audioOnly && !isVid(file) && isStillFile(file);
     const m = addMedia({
       size: file.size, path: pathMap.get(file) || file.webkitRelativePath || '',
       name: file.name, file, handle: handleMap.get(file) || null, url: null,
-      width: 0, height: 0, duration: 0, thumb: null, playable: false,
-      kind: audioOnly ? 'audio' : 'video',
-      // audio has no picture to proxy — the mixer decodes the original
-      proxyReady: false, proxyUrl: null, proxyStatus: (!audioOnly && el('autoProxy').value === 'all') ? 'queued' : '',
+      width: 0, height: 0, duration: still ? STILL_SOURCE : 0, thumb: null, playable: false,
+      kind: audioOnly ? 'audio' : still ? 'image' : 'video',
+      // audio has no picture to proxy — the mixer decodes the original; a
+      // still is decoded at the size it is shown, so it needs none either
+      proxyReady: false, proxyUrl: null, proxyStatus: (!audioOnly && !still && el('autoProxy').value === 'all') ? 'queued' : '',
     });
     work.push({ m, file, relink: false });
   }
@@ -193,6 +197,17 @@ async function importFiles(files, { explicit = true } = {}) {
       m.url = URL.createObjectURL(file);
       try { m.duration = await audioDuration(m.url); } catch (e) { console.warn('[import] audio probe failed', file.name, e); }
       m.playable = true;
+      updateCard(m);
+      bus.emit('media:changed');
+      if (relink) toast('Re-linked ' + file.name);
+      continue;
+    }
+    if (m.kind === 'image') {
+      // still: size and a thumbnail (RAW from the camera's embedded preview)
+      try {
+        const s = await probeStill(file);
+        m.width = s.width; m.height = s.height; m.thumb = s.thumb; m.playable = true;
+      } catch (e) { console.warn('[import] still probe failed', file.name, e); }
       updateCard(m);
       bus.emit('media:changed');
       if (relink) toast('Re-linked ' + file.name);
@@ -479,7 +494,7 @@ let scrubV = null;
 // build (once) the persisted 10-frame filmstrip for a clip — proxy preferred,
 // original as fallback. media:changed persists it via autosave.
 export async function ensureStrip(m) {
-  if (m.strip || m._stripBusy) return;
+  if (m.strip || m._stripBusy || m.kind === 'image') return;
   const src = m.proxyBlob || ((m.playable && m.file) ? m.file : null);
   if (!src) return;
   m._stripBusy = true;
@@ -658,7 +673,7 @@ export function applyThumbStyle(elm, m) {
 }
 
 export function wireHoverScrub(m, tb) {
-  if (!canHoverScrub) return;
+  if (!canHoverScrub || m.kind === 'image') return;
   tb.addEventListener('pointerenter', (e) => {
     if (e.pointerType && e.pointerType !== 'mouse') return;
     // filmstrip first: works with no file/proxy loaded at all. Live <video>
@@ -744,7 +759,7 @@ export function updateCard(m, card) {
   badge.textContent = bt;
   badge.className = 'proxy-badge ' + (st === 'ready' ? 'ready' : st === 'failed' ? 'failed' : 'pending');
   badge.style.display = bt ? '' : 'none';
-  card.querySelector('.dur-badge').textContent = fmtShort(m.duration);
+  card.querySelector('.dur-badge').textContent = m.kind === 'image' ? 'Still' : fmtShort(m.duration);
   card.querySelector('.cap').textContent = m.name;
   // audio has no frame size — "?×?" there reads as a failed probe
   card.querySelector('.sub').textContent = m.kind === 'audio'
@@ -978,6 +993,7 @@ async function adoptHandleFile(m) {
 
 // whether the auto-proxy setting wants a proxy for this clip (after probing)
 function autoProxyFor(m) {
+  if (m.kind === 'image') return false;   // stills decode at display size
   const mode = el('autoProxy')?.value || 'unsupported';
   if (mode === 'all') return true;
   if (mode === 'unsupported') return !m.playable || isMcraw(m.name);

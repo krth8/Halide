@@ -5,6 +5,7 @@
 //    matters — `accept="video/*"` alone routes Android to the Photos/gallery
 //    app, hiding the Downloads folder; listing extensions forces the system
 //    Documents picker where Downloads is reachable.
+import { STILL_EXTS } from './still.js';
 export const handleMap = new WeakMap(); // File -> FileSystemFileHandle (when available)
 export const pathMap = new WeakMap();   // File -> relative path (folder import)
 
@@ -14,7 +15,7 @@ const EXTS = ['.mp4', '.mov', '.m4v', '.mkv', '.webm', '.avi', '.mts', '.m2ts', 
 // skip (camera rigs drop .wav next to the footage), while a file the user
 // picked by hand is the track they want. See importFiles({ explicit }).
 const AUDIO_EXTS = ['.mp3', '.m4a', '.aac', '.wav', '.flac', '.ogg', '.oga', '.opus', '.aiff', '.aif'];
-const ACCEPT = 'video/*,audio/*,image/*,' + [...EXTS, ...AUDIO_EXTS].join(',');
+const ACCEPT = 'video/*,audio/*,image/*,' + [...EXTS, ...AUDIO_EXTS, ...STILL_EXTS].join(',');
 const audioRe = new RegExp('(' + AUDIO_EXTS.map((e) => '\\' + e).join('|') + ')$', 'i');
 export const isAudioFile = (file) => !!file && (String(file.type || '').startsWith('audio') || audioRe.test(file.name || ''));
 
@@ -24,7 +25,7 @@ export async function pickMedia() {
       const handles = await window.showOpenFilePicker({
         multiple: true,
         excludeAcceptAllOption: false,
-        types: [{ description: 'Video, audio & image', accept: { 'video/*': EXTS, 'audio/*': AUDIO_EXTS, 'image/*': ['.jpg', '.jpeg', '.png', '.webp'] } }],
+        types: [{ description: 'Video, audio, photos & RAW', accept: { 'video/*': EXTS, 'audio/*': AUDIO_EXTS, 'image/*': STILL_EXTS } }],
       });
       const files = [];
       for (const h of handles) { const f = await h.getFile(); handleMap.set(f, h); files.push(f); }

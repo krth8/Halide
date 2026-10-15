@@ -9,6 +9,10 @@ import { state, getMedia, timelineDuration, videoProgram, programAt, srcTimeAt, 
 import { FrameServer } from '../media/frameserver.js';
 import { AudioEngine } from './audio.js';
 import { renderTitleCanvas } from './title.js';
+import { stillBitmap } from '../media/still.js';
+// titles and stills have no <video> to drive: they draw a static source and the
+// playhead advances on the wall clock
+const isStatic = (clip) => clip.type === 'title' || clip.type === 'still';
 
 function mkVideo() { const v = document.createElement('video'); v.playsInline = true; v.preload = 'auto'; v.muted = false; return v; }
 
@@ -38,7 +42,7 @@ export class Engine {
   _srcFor(m) { return m && m.proxyReady && m.proxyUrl ? m.proxyUrl : (m ? m.url : ''); }
 
   _loadInto(slot, seg, seekTo) {
-    if (seg.clip.type === 'title') { slot.seg = seg; slot.clipId = seg.clip.id; try { slot.el.pause(); } catch {} return; }
+    if (isStatic(seg.clip)) { slot.seg = seg; slot.clipId = seg.clip.id; try { slot.el.pause(); } catch {} return; }
     const m = getMedia(seg.clip.mediaId); if (!m) return;
     if (slot.clipId !== seg.clip.id || slot.el.src !== this._srcFor(m)) {
       slot.el.src = this._srcFor(m);
@@ -53,7 +57,7 @@ export class Engine {
     const prog = videoProgram();
     const idx = prog.findIndex((s) => s.clip === afterSeg.clip && Math.abs(s.start - afterSeg.start) < 1e-3);
     const next = prog[idx + 1];
-    if (!next || next.clip.type === 'title') { this.pre.seg = null; return; }
+    if (!next || isStatic(next.clip)) { this.pre.seg = null; return; }
     this._loadInto(this.pre, next, next.clip.in);
     this.pre.el.pause();
   }
@@ -82,7 +86,7 @@ export class Engine {
     this._sizeCanvas(seg.clip);
     this._loadInto(this.cur, seg, src);
     this._lastWall = null;
-    if (seg.clip.type === 'title') { this._drawOnce(); }
+    if (isStatic(seg.clip)) { this._drawOnce(); }
     else {
       this.cur.el.playbackRate = seg.clip.speed || 1;
       if (state.playing) this.cur.el.play().catch(() => {});
@@ -103,7 +107,7 @@ export class Engine {
     const seg = programAt(state.playhead);
     if (seg) {
       this._loadInto(this.cur, seg, srcTimeAt(seg, state.playhead));
-      if (seg.clip.type !== 'title') { this._applyClipAV(seg.clip, this.cur.el); this.cur.el.play().catch(() => {}); }
+      if (!isStatic(seg.clip)) { this._applyClipAV(seg.clip, this.cur.el); this.cur.el.play().catch(() => {}); }
       this._preloadNext(seg);
     } else {
       // pressing play inside a gap: roll black until the next clip
@@ -130,7 +134,7 @@ export class Engine {
   _armLoopWrap() {
     const a = Math.max(0, this.loop.a) + 0.001;
     const seg = programAt(a);
-    if (!seg || seg.clip.type === 'title') { this._loopArmed = null; return; }
+    if (!seg || isStatic(seg.clip)) { this._loopArmed = null; return; }
     const src = srcTimeAt(seg, a);
     const key = seg.clip.id + '@' + src.toFixed(3);
     // re-arm if a cut's _preloadNext has since claimed `pre` for itself
@@ -205,7 +209,7 @@ export class Engine {
     }
     state.playhead = next.start + 0.001;
     this._lastWall = null;
-    if (next.clip.type === 'title') { this._preloadNext(next); return; }
+    if (isStatic(next.clip)) { this._preloadNext(next); return; }
     this._sizeCanvas(next.clip);
     this._applyClipAV(next.clip, this.cur.el);
     this.cur.el.playbackRate = next.clip.speed || 1;
@@ -242,7 +246,7 @@ export class Engine {
     const seg = this.cur.seg;
     if (!seg) { this._advance(); return; }
     const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
-    if (seg.clip.type === 'title') {
+    if (isStatic(seg.clip)) {
       // no video to clock against — advance the playhead by real elapsed time
       const dt = this._lastWall ? Math.max(0, (now - this._lastWall) / 1000) : 0;
       this._lastWall = now;
@@ -304,6 +308,13 @@ export class Engine {
   // resolve a clip to a drawable source (video element or rendered title canvas)
   _ensureCanvasSize() { this._sizeCanvas(); }
   _sourceFor(clip) {
+    if (clip.type === 'still') {
+      // decoded once at the frame's size; until then the previous frame holds
+      const m = getMedia(clip.mediaId);
+      const side = Math.max(this.canvas?.width || 1920, this.canvas?.height || 1080);
+      const bmp = stillBitmap(m, side, () => { if (!state.playing) this._drawOnce(); });
+      return bmp ? { source: bmp, w: bmp.width, h: bmp.height } : null;
+    }
     if (clip.type === 'title') {
       const W = this.canvas?.width || 1920, H = this.canvas?.height || 1080;
       const cv = renderTitleCanvas(clip.title, W, H,
@@ -393,8 +404,9 @@ export class Engine {
     if (seg && (state.playhead < seg.start - 0.02 || state.playhead >= seg.end)) seg = null;
     seg = seg || programAt(state.playhead);
     if (!seg) { return this._drawBlack(); }
-    if (seg.clip.type === 'title') {
+    if (isStatic(seg.clip)) {
       this._ensureCanvasSize(seg.clip); this._setLayer(seg.clip, 1);
+      // a still draws through _sourceFor like a title
       const s = this._sourceFor(seg.clip);
       return s ? this.renderer.drawSource(s.source, s.w, s.h) : false;
     }
