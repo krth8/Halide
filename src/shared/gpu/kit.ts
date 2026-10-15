@@ -118,10 +118,11 @@ export class Arena {
   flush() { if (this.used) this.device.queue.writeBuffer(this.buf, 0, this.data, 0, this.used); }
 }
 
-/** One full-screen draw into `out` (a target or a canvas view). */
-export function draw(enc: GPUCommandEncoder, device: GPUDevice, pipe: GPURenderPipeline, out: GPUTextureView, entries: GPUBindGroupEntry[]): void {
+/** One full-screen draw into `out` (a target or a canvas view). `load` keeps what is there (to
+ *  composite over it); otherwise it is cleared first. */
+export function draw(enc: GPUCommandEncoder, device: GPUDevice, pipe: GPURenderPipeline, out: GPUTextureView, entries: GPUBindGroupEntry[], load = false): void {
   const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries });
-  const pass = enc.beginRenderPass({ colorAttachments: [{ view: out, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] });
+  const pass = enc.beginRenderPass({ colorAttachments: [{ view: out, loadOp: load ? 'load' : 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] });
   pass.setPipeline(pipe);
   pass.setBindGroup(0, bg);
   pass.draw(3);

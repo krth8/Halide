@@ -45,7 +45,7 @@ function renderDiag() {
 function openDiag() {
   const b = document.getElementById('diagBuild'); if (b) b.textContent = BUILD;
   const caps = document.getElementById('diagCaps');
-  if (caps) caps.textContent = `WebGPU ${renderer.ok ? '✓' : '✗'} · ${window.__eddit?.codecLine || ''} · COI ${self.crossOriginIsolated} · ${navigator.userAgent}`;
+  if (caps) caps.textContent = `WebGPU ${renderer.ok ? '✓' : '✗'} · ${window.__halide?.codecLine || ''} · COI ${self.crossOriginIsolated} · ${navigator.userAgent}`;
   renderDiag();
   document.getElementById('diagOverlay').classList.remove('hidden');
 }
@@ -144,7 +144,7 @@ async function boot() {
   });
 
   bus.on('frame:drawn', onFrameDrawn);
-  window.__eddit = { ...window.__eddit, renderer, engine, state, bus, appendClip, defaultGrade };
+  window.__halide = { ...window.__halide, renderer, engine, state, bus, appendClip, defaultGrade };
 
   // diagnostics overlay (tap the ffmpeg pill or the build tag)
   el('hlHome')?.replaceWith(homeLink('Edit'));

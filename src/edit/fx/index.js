@@ -6,10 +6,18 @@
 // from before". New effects: add a module here and its uniforms/shader code.
 import vignette from './vignette.js';
 import glow from './glow.js';
+import grain from './grain.js';
+import halation from './halation.js';
+import blur from './blur.js';
+import clarity from './clarity.js';
+import texture from './texture.js';
+import dehaze from './dehaze.js';
 import distort from './distort.js';
 import wiggle from './wiggle.js';
 
-export const FX = [vignette, glow, distort, wiggle];
+// glow, grain, halation, blur, clarity, texture and dehaze run in the shared
+// WebGPU post chain (src/shared/gpu/develop.ts) — the same maths as Process
+export const FX = [vignette, glow, grain, halation, blur, clarity, texture, dehaze, distort, wiggle];
 export const fxDef = (id) => FX.find((f) => f.id === id) || null;
 
 // Grades saved before the stack existed have no g.fx — their effects were on
@@ -18,13 +26,13 @@ export function fxOn(g, id) {
   if (!g) return false;
   if (Array.isArray(g.fx)) return g.fx.some((e) => e.id === id && e.on !== false);
   const d = fxDef(id);
-  return !!d && (g[d.amount] || 0) > 1e-4;
+  return !!d && Math.abs(g[d.amount] || 0) > 1e-4;
 }
 
 // the clip's effect stack, migrating a pre-stack grade in place
 export function fxStack(g) {
   if (!g) return [];
-  if (!Array.isArray(g.fx)) g.fx = FX.filter((d) => (g[d.amount] || 0) > 1e-4).map((d) => ({ id: d.id, on: true }));
+  if (!Array.isArray(g.fx)) g.fx = FX.filter((d) => Math.abs(g[d.amount] || 0) > 1e-4).map((d) => ({ id: d.id, on: true }));
   return g.fx;
 }
 

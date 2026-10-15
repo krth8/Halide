@@ -30,7 +30,7 @@ export async function initMedia(eng) {
   caps = await codecSupport();
   // codec capability line lives in the diagnostics overlay (header pills are gone)
   const codecLine = caps.hevc10 ? 'H.264 · H.265 10-bit' : caps.hevc ? 'H.264 · H.265 8-bit' : caps.decode ? 'H.264 · H.265 via <video>' : 'no WebCodecs';
-  if (window.__eddit) window.__eddit.codecLine = codecLine; else window.__eddit = { codecLine };
+  if (window.__halide) window.__halide.codecLine = codecLine; else window.__halide = { codecLine };
   ffUI();  // set initial ffmpeg pill state
 
   const doPick = async () => { const files = await pickMedia(); if (files.length) importFiles(files); };

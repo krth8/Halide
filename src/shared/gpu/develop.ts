@@ -33,10 +33,10 @@ export interface GradeSpec {
 
 export interface MaskSpec { grade: GradeSpec; linear: boolean; invert: boolean; a: [number, number]; b: [number, number]; feather: number; amount: number }
 
-export interface DevelopSpec {
-  base: GradeSpec;
-  masks: MaskSpec[];
-  lut: { id: string; size: number; data: Float32Array } | null;
+/** The effects after the grade — usable on their own (Edit runs them on a graded layer). */
+export interface PostSpec {
+  /** presence on the whole image (Process does it per grade instead, so masks get their own) */
+  presence?: { dehaze: number; clarity: number; texture: number };
   /** blur radius as a fraction of the width (0 = off) and its shape */
   blur: number; blurMode: 0 | 1 | 2;   // tilt, radial, full
   bloom: number;                       // 0…1
@@ -47,9 +47,23 @@ export interface DevelopSpec {
   grain: number;                       // amplitude
   grainSize: number;                   // cell size in output px
   seed: number;
+  /** keep the input's alpha (a premultiplied layer) instead of writing opaque */
+  keepAlpha?: boolean;
+}
+
+export interface DevelopSpec extends PostSpec {
+  base: GradeSpec;
+  masks: MaskSpec[];
+  lut: { id: string; size: number; data: Float32Array } | null;
   /** show the source through the geometry only (before/after) */
   bypass?: boolean;
 }
+
+/** Post defaults: everything off. */
+export const NO_POST: PostSpec = { blur: 0, blurMode: 2, bloom: 0, bloomThreshold: 0.7, bloomRadius: 0.5, halation: 0, vignette: 0, vignetteInner: 0.48, vignetteWidth: 0.57, grain: 0, grainSize: 1, seed: 0 };
+
+/** Whether a post spec does anything at all. */
+export const hasPost = (p: PostSpec) => !!(p.blur || p.bloom || p.halation || p.vignette || p.grain || p.presence?.dehaze || p.presence?.clarity || p.presence?.texture);
 
 /* ---------- shaders ---------- */
 
@@ -309,7 +323,7 @@ const FINISH = COLOR + VIGNETTE + GRAIN + /* wgsl */`
 struct F {
   a: vec4f,   // blurOn, blurMode, bloomK, halK
   v: vec4f,   // vignette amount, inner, width, aspect
-  g: vec4f,   // grain amount, size, seed
+  g: vec4f,   // grain amount, size, seed, keepAlpha
 };
 @group(0) @binding(0) var<uniform> u: F;
 @group(0) @binding(1) var a: texture_2d<f32>;
@@ -318,7 +332,8 @@ struct F {
 @group(0) @binding(4) var halT: texture_2d<f32>;
 @group(0) @binding(5) var s: sampler;
 @fragment fn fs(in: VSOut) -> @location(0) vec4f {
-  var c = textureSample(a, s, in.uv).rgb;
+  let src = textureSample(a, s, in.uv);
+  var c = src.rgb;
   let bl = textureSample(blurT, s, in.uv).rgb;
   let bm = textureSample(bloomT, s, in.uv).rgb;
   let hl = textureSample(halT, s, in.uv).rgb;
@@ -335,7 +350,8 @@ struct F {
   if (u.a.w > 0.0) { c = c + vec3f(1.0, 0.27, 0.11) * luma(hl) * u.a.w; }
   if (u.v.x != 0.0) { c = vignette(c, in.uv, u.v.x, u.v.y, u.v.z); }
   if (u.g.x > 0.0) { c = grain(c, in.pos.xy, u.g.x, u.g.y, u.g.z); }
-  return vec4f(clamp(c, vec3f(0.0), vec3f(1.0)), 1.0);
+  let alpha = select(1.0, src.a, u.g.w > 0.5);
+  return vec4f(clamp(c, vec3f(0.0), vec3f(alpha)), alpha);
 }`;
 
 /* ---------- pipeline ---------- */
@@ -425,6 +441,15 @@ export class Develop {
       ]);
       base = o;
     }
+    this.post(enc, base, spec, out, outFmt, W, H);
+  }
+
+  /** The effects after the grade, from `base` (W×H) into `out`. */
+  post(enc: GPUCommandEncoder, input: Target, spec: PostSpec, out: GPUTextureView, outFmt: GPUTextureFormat, W: number, H: number): void {
+    const { kit, device, arena } = this;
+    let base = input;
+    const pr = spec.presence;
+    if (pr && (pr.dehaze || pr.clarity || pr.texture)) base = this.presence(enc, base, pr, W, H, 'p');
 
     // 2. blur
     const blurOn = spec.blur > 0;
@@ -472,7 +497,7 @@ export class Develop {
       { binding: 0, resource: arena.push(new Float32Array([
         blurOn ? 1 : 0, spec.blurMode, spec.bloom > 0 ? (spec.bloom * 2.2) / norm : 0, spec.halation * 1.6,
         spec.vignette, spec.vignetteInner, spec.vignetteWidth, W / H,
-        spec.grain, spec.grainSize, spec.seed % 997, 0,
+        spec.grain, spec.grainSize, spec.seed % 997, spec.keepAlpha ? 1 : 0,
       ])) },
       { binding: 1, resource: base.view }, { binding: 2, resource: blurTex.view },
       { binding: 3, resource: bloomTex.view }, { binding: 4, resource: halTex.view },
@@ -526,7 +551,12 @@ export class Develop {
       { binding: 5, resource: this.lutTex.createView({ dimension: '3d' }) },
     ]);
     if (!g.dehaze && !g.clarity && !g.texture) return A;
+    return this.presence(enc, A, g, W, H, slot);
+  }
 
+  /** Dehaze, clarity and texture on `A`. */
+  private presence(enc: GPUCommandEncoder, A: Target, g: { dehaze: number; clarity: number; texture: number }, W: number, H: number, slot: string): Target {
+    const { kit, device, arena } = this;
     const long = Math.max(W, H);
     let dark = this.black, cla = this.black, tex = this.black;
     if (g.dehaze) {

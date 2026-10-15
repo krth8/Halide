@@ -22,6 +22,18 @@ export function renderFxStack(box, g, onChange, { addMenu = false, emptyText = '
       <button class="fx-del" title="Remove effect" aria-label="Remove ${esc(d.label)}">✕</button></div>`;
     for (const p of d.params) {
       const v = g[p.key] ?? p.def;
+      if (p.options) {   // a choice: segmented buttons
+        const row = document.createElement('div');
+        row.className = 'fx-choice';
+        row.innerHTML = `<label>${esc(p.label)}</label><div class="fx-seg">${p.options.map(([val, lbl]) => `<button data-v="${val}" class="${val === v ? 'on' : ''}">${esc(lbl)}</button>`).join('')}</div>`;
+        row.querySelectorAll('button').forEach((b) => b.onclick = () => {
+          g[p.key] = Number(b.dataset.v);
+          row.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+          onChange(false);
+        });
+        card.appendChild(row);
+        continue;
+      }
       const row = document.createElement('div');
       row.className = 'slider-row';
       row.innerHTML = `<label>${esc(p.label)}</label><input type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${v}" data-default="${p.add ?? p.def}"><span class="val">${Number(v).toFixed(2)}</span>`;

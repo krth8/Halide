@@ -1,4 +1,5 @@
-// Glow: exponential bloom — highlights above the threshold bleed outward.
+// Glow: multi-step bloom — highlights above the threshold bleed outward (shared post chain,
+// the same bloom as Process).
 export default {
   id: 'glow', label: 'Glow', icon: '✦',
   amount: 'glow',

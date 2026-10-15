@@ -6,6 +6,10 @@ import { identityCube } from './lut.js';
 import { curveEval } from '../util.js';
 import { GAMUT } from './logtransforms.js';
 import { fxOn } from '../fx/index.js';
+import { COLOR, VIGNETTE } from '../../shared/gpu/wgsl.ts';
+import { gpuDevice } from '../../shared/gpu/device.ts';
+import { Kit, Arena, draw } from '../../shared/gpu/kit.ts';
+import { Develop, hasPost } from '../../shared/gpu/develop.ts';
 
 // row-major 3x3 -> WGSL mat3x3 constructor (column vectors)
 const m3 = (M) => `mat3x3<f32>(vec3(${M[0]}, ${M[3]}, ${M[6]}), vec3(${M[1]}, ${M[4]}, ${M[7]}), vec3(${M[2]}, ${M[5]}, ${M[8]}))`;
@@ -56,13 +60,7 @@ struct VSOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
   return o;
 }
 
-fn srgbToLin(c: vec3<f32>) -> vec3<f32> {
-  return select(c/12.92, pow((c+0.055)/1.055, vec3(2.4)), c > vec3(0.04045));
-}
-fn linToSrgb(c: vec3<f32>) -> vec3<f32> {
-  let cc = clamp(c, vec3(0.0), vec3(1.0));
-  return select(cc*12.92, 1.055*pow(cc, vec3(1.0/2.4))-0.055, cc > vec3(0.0031308));
-}
+${COLOR}${VIGNETTE}
 // project output encode: sRGB for web, pure 2.4 gamma for Rec.709/BT.1886
 // delivery (tf2.w carries the project's choice; curves stay in sRGB domain)
 fn linToOut(c: vec3<f32>) -> vec3<f32> {
@@ -130,17 +128,7 @@ fn fbm(p: vec2<f32>) -> f32 {
   return v;
 }
 
-// ACES filmic tone map (Narkowicz approximation) — compresses highlights with a
-// smooth shoulder so boosted-contrast flat footage keeps its highlight detail
-fn acesFilm(x: vec3<f32>) -> vec3<f32> {
-  return clamp((x * (2.51 * x + vec3(0.03))) / (x * (2.43 * x + vec3(0.59)) + vec3(0.14)), vec3(0.0), vec3(1.0));
-}
-
-// standard HSV -> RGB (h wraps; s,v unbounded above 1 for linear-light values)
-fn hsv2rgb(h: f32, s: f32, v: f32) -> vec3<f32> {
-  let p = abs(fract(vec3(h) + vec3(1.0, 2.0/3.0, 1.0/3.0)) * 6.0 - vec3(3.0));
-  return v * mix(vec3(1.0), clamp(p - vec3(1.0), vec3(0.0), vec3(1.0)), s);
-}
+// acesFilm, hsv2rgb, srgb transfers and vignette come from the shared library
 
 fn applyCurve(c: vec3<f32>) -> vec3<f32> {
   let r = textureSample(curveTex, curveSamp, vec2(clamp(c.r,0.0,1.0), 0.5)).r;
@@ -223,8 +211,8 @@ fn applyCurve(c: vec3<f32>) -> vec3<f32> {
     if (G.fx1.z > 0.0005) { c = mix(c, acesFilm(max(c, vec3(0.0))), G.fx1.z); }
   }
   // saturation
-  let luma = dot(max(c, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
-  c = mix(vec3(luma), c, G.p0.z);
+  let lum = luma(max(c, vec3(0.0)));
+  c = mix(vec3(lum), c, G.p0.z);
   c = max(c, vec3(0.0));
 
   // HSL curves: 8 hue bands driving hue shift / saturation / luminance.
@@ -310,37 +298,10 @@ fn applyCurve(c: vec3<f32>) -> vec3<f32> {
     c = mix(c0, c, m);
   }
 
-  // exponential glow (bloom): highlights of the source bleed over their
-  // neighbours. Single-pass approximation — three rings of taps whose weights
-  // fall off exponentially with distance; taps get decode + exposure only.
-  // (srcAt samples at explicit LOD 0, safe inside the uniform branch/loops.)
-  if (G.fx0.w > 0.0005) {
-    let dims = vec2<f32>(textureDimensions(srcTex));
-    let aspect = dims.y / max(dims.x, 1.0);
-    let radius = max(0.05, G.fx1.y) * 0.08;
-    let thr = vec3(max(G.fx1.x, 0.0));
-    var acc = vec3(0.0);
-    var wsum = 0.0;
-    for (var ring = 1; ring < 4; ring++) {
-      let rr = radius * f32(ring) / 3.0;
-      let w = exp(f32(1 - ring));
-      for (var k = 0; k < 8; k++) {
-        let ang = (f32(k) + f32(ring) * 0.5) * 0.78539816;
-        let off = vec2(cos(ang) * aspect, sin(ang)) * rr;
-        let tap = srcAt(uv + off).rgb;
-        let lin = decodeInput(tap, G.p1.w) * pow(2.0, G.p0.x);
-        acc = acc + max(lin - thr, vec3(0.0)) * w;
-        wsum = wsum + w;
-      }
-    }
-    c = c + acc / max(wsum, 0.0001) * G.fx0.w * 2.0;
-  }
-
-  // vignette: screen-space radial falloff toward the corners of the frame
+  // vignette: radial falloff toward the frame corners (shared with Process).
+  // Glow, grain, blur and detail run after this pass, in the shared post chain.
   if (G.fx0.x > 0.0005) {
-    let d = length(in.uv - vec2(0.5, 0.5)) * 1.4142136;
-    let fall = smoothstep(clamp(G.fx0.y, 0.0, 1.5), clamp(G.fx0.y, 0.0, 1.5) + max(0.02, G.fx0.z), d);
-    c = c * (1.0 - fall * clamp(G.fx0.x, 0.0, 1.0));
+    c = vignette(c, in.uv, clamp(G.fx0.x, 0.0, 1.0), clamp(G.fx0.y, 0.0, 1.5), max(0.02, G.fx0.z));
   }
 
   let vis = select(0.0, 1.0, inside);
@@ -352,6 +313,12 @@ fn applyCurve(c: vec3<f32>) -> vec3<f32> {
   return vec4(linToOut(c) * a, a);
 }
 `;
+
+/** Draws a finished layer texture onto the frame (premultiplied "over"). */
+const COMPOSITE = /* wgsl */`
+@group(0) @binding(0) var t: texture_2d<f32>;
+@group(0) @binding(1) var s: sampler;
+@fragment fn fs(in: VSOut) -> @location(0) vec4f { return textureSample(t, s, in.uv); }`;
 
 export class Renderer {
   constructor() {
@@ -367,11 +334,13 @@ export class Renderer {
   }
 
   async init() {
-    if (!navigator.gpu) return false;
-    const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) return false;
-    this.device = await adapter.requestDevice();
+    // the page's shared device (src/shared/gpu) — the post chain below runs on it too
+    this.device = await gpuDevice();
+    if (!this.device) return false;
     this.format = navigator.gpu.getPreferredCanvasFormat();
+    this.kit = new Kit(this.device);
+    this.arena = new Arena(this.device);
+    this.develop = new Develop(this.kit, this.arena);
 
     this.uniformBuf = this.device.createBuffer({ size: 24 * 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.srcSampler = this.device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
@@ -384,7 +353,13 @@ export class Renderer {
     // copyExternalImageToTexture from a playing video forces a GPU readback
     // per frame that stutters badly on mobile SoCs and outright fails on some
     // Android hw-decoder configs (frozen picture while the clock advances).
-    const mkPipeline = (ext) => {
+    const OVER = {
+      color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
+      alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
+    };
+    this._over = OVER;
+    // `off`: the layer renders into its own texture (no blending) for the post chain
+    const mkPipeline = (ext, off = false) => {
       const code = WGSL
         .replace('__SRC_DECL__', ext ? 'var srcTex: texture_external;' : 'var srcTex: texture_2d<f32>;')
         .replace('__SRC_FN__', ext
@@ -394,20 +369,18 @@ export class Renderer {
       return this.device.createRenderPipeline({
         layout: 'auto',
         vertex: { module: mod, entryPoint: 'vs' },
-        fragment: { module: mod, entryPoint: 'fs', targets: [{
-          format: this.format,
+        fragment: { module: mod, entryPoint: 'fs', targets: [off
+          ? { format: 'rgba8unorm' }
           // premultiplied "over": out = src + dst*(1-src.a)
-          blend: {
-            color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
-            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
-          },
-        }] },
+          : { format: this.format, blend: OVER }] },
         primitive: { topology: 'triangle-list' },
       });
     };
     this.pipeline = mkPipeline(false);
+    this.pipelineOff = mkPipeline(false, true);
     this.extOK = typeof this.device.importExternalTexture === 'function';
     try { this.pipelineExt = this.extOK ? mkPipeline(true) : null; } catch { this.pipelineExt = null; this.extOK = false; }
+    try { this.pipelineExtOff = this.extOK ? mkPipeline(true, true) : null; } catch { this.pipelineExtOff = null; }
 
     this.setLUT(null);
     this.setCurve(null);
@@ -574,7 +547,7 @@ export class Renderer {
       // fx defaults via ?? so grades saved before vignette/glow existed still
       // work; an amount only counts when the effect is on the clip's FX stack
       const amt = (id) => (fxOn(g, id) ? g[id] || 0 : 0);
-      f.set([amt('vignette'), g.vignetteSize ?? 0.7, g.vignetteFeather ?? 0.5, amt('glow')], 48);
+      f.set([amt('vignette'), g.vignetteSize ?? 0.7, g.vignetteFeather ?? 0.5, 0], 48);   // glow: post chain
       f.set([g.glowThreshold ?? 0.6, g.glowRadius ?? 0.5, g.toneMap || 0, 0], 52);
       f.set([amt('distort'), g.distortScale ?? 0.5, g.distortSpeed ?? 0.5, this._time || 0], 56);
       f.set([amt('wiggle'), g.wiggleFreq ?? 0.5, g.toneSh || 0, g.toneHi || 0], 60);
@@ -596,10 +569,17 @@ export class Renderer {
     this.device.queue.writeBuffer(this.uniformBuf, 0, f);
   }
 
-  _bind() {
+  _bind(pipeline = this.pipeline) {
+    if (pipeline !== this.pipeline) return this._makeBind(pipeline);
     if (!this.bindDirty && this._bindGroup) return this._bindGroup;
-    this._bindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
+    this._bindGroup = this._makeBind(pipeline);
+    this.bindDirty = false;
+    return this._bindGroup;
+  }
+
+  _makeBind(pipeline) {
+    return this.device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: this.uniformBuf } },
         { binding: 1, resource: this.srcTex.createView() },
@@ -610,8 +590,6 @@ export class Renderer {
         { binding: 6, resource: this.curveSampler },
       ],
     });
-    this.bindDirty = false;
-    return this._bindGroup;
   }
 
   // ---- compositing: beginComposite() clears the frame, then drawLayer() blends
@@ -627,9 +605,9 @@ export class Renderer {
 
   // per-frame bind group for an imported external texture (they expire after
   // the task, so caching is impossible by design — creation is cheap)
-  _bindExt(extTex) {
+  _bindExt(extTex, pipeline = this.pipelineExt) {
     return this.device.createBindGroup({
-      layout: this.pipelineExt.getBindGroupLayout(0),
+      layout: pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: this.uniformBuf } },
         { binding: 1, resource: extTex },
@@ -653,11 +631,15 @@ export class Renderer {
     }
     const isVideo = typeof HTMLVideoElement !== 'undefined' && source instanceof HTMLVideoElement;
     if (isVideo && source.readyState < 2) return false;   // no decodable frame yet
+    // layers with glow / grain / blur / detail render into their own texture first, then through
+    // the shared post chain, then "over" the frame; the rest draw straight onto it
+    const post = this._postSpec();
+    const extPipe = post ? this.pipelineExtOff : this.pipelineExt;
     let pipeline = null, bind = null;
-    if (isVideo && this.extOK && this.pipelineExt) {
+    if (isVideo && this.extOK && extPipe) {
       try {
-        bind = this._bindExt(this.device.importExternalTexture({ source }));
-        pipeline = this.pipelineExt;
+        bind = this._bindExt(this.device.importExternalTexture({ source }), extPipe);
+        pipeline = extPipe;
         this.srcMode = 'external';
       } catch (e) {
         // readyState was guarded above, so a throw here means the path itself
@@ -680,16 +662,52 @@ export class Renderer {
           this.srcMode = 'canvas';
         } catch (e2) { this.uploadFails = (this.uploadFails || 0) + 1; return false; }
       }
-      pipeline = this.pipeline; bind = this._bind();
+      pipeline = post ? this.pipelineOff : this.pipeline; bind = this._bind(pipeline);
     }
     const enc = this.device.createCommandEncoder();
-    const pass = enc.beginRenderPass({ colorAttachments: [{ view: this._frameView, loadOp: 'load', storeOp: 'store' }] });
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bind);
-    pass.draw(3);
-    pass.end();
+    if (!post) {
+      const pass = enc.beginRenderPass({ colorAttachments: [{ view: this._frameView, loadOp: 'load', storeOp: 'store' }] });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bind);
+      pass.draw(3);
+      pass.end();
+    } else {
+      const W = this.canvas.width, H = this.canvas.height;
+      this._layerT = this.kit.target(this._layerT, W, H);
+      this._postT = this.kit.target(this._postT, W, H);
+      const pass = enc.beginRenderPass({ colorAttachments: [{ view: this._layerT.view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }] });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bind);
+      pass.draw(3);
+      pass.end();
+      this.arena.reset();
+      this.develop.post(enc, this._layerT, { ...post, keepAlpha: true }, this._postT.view, 'rgba8unorm', W, H);
+      draw(enc, this.device, this.kit.pipeline('edit-composite', COMPOSITE, this.format, this._over), this._frameView,
+        [{ binding: 0, resource: this._postT.view }, { binding: 1, resource: this.kit.linear }], true);
+      this.arena.flush();
+    }
     this.device.queue.submit([enc.finish()]);
     return true;
+  }
+
+  /** The layer's post effects (glow, grain, halation, blur, detail) from its FX stack, or null. */
+  _postSpec() {
+    const g = this._grade;
+    if (!g) return null;
+    const on = (id) => fxOn(g, id);
+    const W = this.canvas?.width || 1920, H = this.canvas?.height || 1080;
+    const spec = {
+      presence: { dehaze: on('dehaze') ? g.dehaze || 0 : 0, clarity: on('clarity') ? g.clarity || 0 : 0, texture: on('texture') ? g.texture || 0 : 0 },
+      blur: on('blur') ? (g.blur || 0) * 0.012 : 0, blurMode: g.blurMode ?? 2,
+      bloom: on('glow') ? g.glow || 0 : 0, bloomThreshold: Math.min(0.95, g.glowThreshold ?? 0.6), bloomRadius: g.glowRadius ?? 0.5,
+      halation: on('halation') ? g.halation || 0 : 0,
+      vignette: 0, vignetteInner: 0, vignetteWidth: 1,   // vignette stays in the grade pass
+      grain: on('grain') ? (g.grain || 0) * 0.16 : 0,
+      grainSize: ((g.grainSize ?? 1.4) * Math.max(W, H)) / 2000,
+      // new grain every frame while the playhead moves, the same grain when paused
+      seed: Math.floor((this._time || 0) * 30),
+    };
+    return hasPost(spec) ? spec : null;
   }
 
   // source: HTMLVideoElement | ImageBitmap | HTMLImageElement | HTMLCanvasElement
