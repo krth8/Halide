@@ -313,7 +313,7 @@ input[type=text] { background: var(--raise); border: 1px solid var(--line); bord
   .trimtl { margin-inline: 8px; }
   .looks.strip-row > * { width: 78px; }
   #curve { width: min(100%, 32vh); margin: 0 auto; }
-  .toast { bottom: calc(env(safe-area-inset-bottom, 0px) + 120px); }
+  :root { --hl-toast-bottom: 120px; }   /* above the tool bar */
   .two { grid-template-columns: 1fr; }
   .empty h1 { font-size: 28px; }
 }

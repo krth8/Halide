@@ -6,8 +6,9 @@ let toastTimer = 0;
 
 export interface ToastAction { label: string; run: () => void }
 
-/** Short message at the bottom of the screen, optionally with one action (e.g. Undo). */
-export function toast(text: string, { action, ms = 3200 }: { action?: ToastAction; ms?: number } = {}): void {
+/** Short message at the bottom of the screen — the one toast of every Halide
+ *  page — optionally an error, optionally with one action (e.g. Undo). */
+export function toast(text: string, { action, ms = 3200, error = false }: { action?: ToastAction; ms?: number; error?: boolean } = {}): void {
   if (!toastEl) {
     toastEl = document.createElement('div');
     toastEl.className = 'hl-toast';
@@ -26,6 +27,7 @@ export function toast(text: string, { action, ms = 3200 }: { action?: ToastActio
     b.onclick = () => { hide(); action.run(); };
     el.appendChild(b);
   }
+  el.classList.toggle('err', error);
   el.classList.add('show');
   const hide = () => { clearTimeout(toastTimer); el.classList.remove('show'); };
   toastTimer = window.setTimeout(hide, ms);

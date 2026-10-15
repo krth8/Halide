@@ -111,7 +111,7 @@ body { background: var(--hl-backdrop) fixed, var(--hl-base); }
 
 /* toast and confirm (src/shared/dialog.ts) */
 .hl-toast {
-  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 24px); z-index: 1000;
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + var(--hl-toast-bottom, 24px)); z-index: 1000;
   display: flex; align-items: center; gap: 14px; max-width: calc(100vw - 32px);
   padding: 11px 12px 11px 18px; border-radius: 999px; color: var(--hl-text); font: 500 14px var(--hl-font);
   background: var(--hl-sheen), var(--hl-glass-strong); box-shadow: var(--hl-shadow);
@@ -120,6 +120,7 @@ body { background: var(--hl-backdrop) fixed, var(--hl-base); }
 }
 .hl-toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
 .hl-toast span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hl-toast.err span { color: var(--hl-danger); }
 .hl-toast:not(:has(button)) { padding-right: 18px; }
 .hl-toast button {
   flex: none; border: 0; border-radius: 999px; padding: 6px 13px; cursor: pointer; font: 650 13px var(--hl-font);

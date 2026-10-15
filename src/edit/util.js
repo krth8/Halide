@@ -1,3 +1,4 @@
+import { toast as sharedToast } from '../shared/dialog.ts';
 // Small shared helpers.
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -44,15 +45,9 @@ export function curveEval(ptsIn, x) {
   return clamp(y, 0, 1);
 }
 
-let toastT;
+// the shared Halide toast (src/shared/dialog.ts)
 export function toast(msg, isErr = false, ms = 2600) {
-  const t = el('toast');
-  if (!t) return;
-  t.textContent = msg;
-  t.classList.toggle('err', isErr);
-  t.classList.add('show');
-  clearTimeout(toastT);
-  toastT = setTimeout(() => t.classList.remove('show'), ms);
+  sharedToast(msg, { error: isErr, ms });
 }
 
 // tiny pub/sub bus

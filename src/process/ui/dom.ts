@@ -1,3 +1,4 @@
+import { toast as sharedToast } from '../../shared/dialog';
 type Attrs = Record<string, unknown> & { class?: string; style?: string };
 type Child = Node | string | null | undefined | false;
 
@@ -18,13 +19,9 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs = 
 
 export const $ = <T extends Element = HTMLElement>(s: string, root: ParentNode = document) => root.querySelector(s) as T;
 
-let toastTimer = 0;
+/** The shared Halide toast (src/shared/dialog.ts). */
 export function toast(msg: string, ms = 2600) {
-  const t = $('#toast');
-  t.textContent = msg;
-  t.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (t.hidden = true), ms);
+  sharedToast(msg, { ms });
 }
 
 export const fmtT = (s: number, dec = 1) => {
