@@ -1,0 +1,1017 @@
+// Media tab: import, media-pool grid, inspector, proxy queue.
+import { state, addMedia, getMedia, appendClip, bus } from '../state.js';
+import { el, $$, fmtShort, fmtTC, toast, uid, clamp } from '../util.js';
+import { probe, makeStrip } from '../media/probe.js';
+import { makeProxy, codecSupport, analyzeProxy } from '../media/proxy.js';
+import { demuxHeader } from '../media/demux.js';
+import { pickMedia, pickFolder, isMediaFile, isAudioFile, handleMap, pathMap } from '../media/pick.js';
+import { proxyKey, isCurrentProxyKey, loadProxy, saveProxy, proxyBytes, clearProxies } from '../store.js';
+import { findLut, LUT_CATEGORIES } from '../luts.js';
+import { ffmpegLoaded, ffmpegMultithread, abortTranscode } from '../media/ffmpeg.js';
+import { isMcraw, openMcraw } from '../media/mcraw.js';
+
+let engine = null;
+let caps = { decode: false, encode: false, hevc: false };
+const proxyQueue = [];
+let proxyBusy = false;
+// clips finished in the current batch. Kept across runQueue() calls: import
+// queues each clip only once its probe is done, so the queue runs dry between
+// clips — resetting here made the sidebar bar run 0→100% once per clip.
+let qDone = 0;
+const stillQueued = (except) => state.media.filter((x) => x !== except && !x.removed && x.proxyStatus === 'queued').length;
+const cards = new Map();       // mediaId -> grid card element (incremental updates)
+const freshSeen = new Set();   // media whose "proxy ready" pop has already played
+let binFilter = null;          // active folder-bin filter (null = all)
+const dirOf = (m) => (m.path || '').split('/').slice(0, -1).join('/');
+
+export async function initMedia(eng) {
+  engine = eng;
+  caps = await codecSupport();
+  // codec capability line lives in the diagnostics overlay (header pills are gone)
+  const codecLine = caps.hevc10 ? 'H.264 · H.265 10-bit' : caps.hevc ? 'H.264 · H.265 8-bit' : caps.decode ? 'H.264 · H.265 via <video>' : 'no WebCodecs';
+  if (window.__eddit) window.__eddit.codecLine = codecLine; else window.__eddit = { codecLine };
+  ffUI();  // set initial ffmpeg pill state
+
+  const doPick = async () => { const files = await pickMedia(); if (files.length) importFiles(files); };
+  el('importBtn').onclick = doPick;
+  el('emptyImport').onclick = doPick;
+  el('importFolderBtn').onclick = async () => { const files = await pickFolder(); if (files.length) importFiles(files, { explicit: false }); };
+  el('fileInput').onchange = (e) => importFiles([...e.target.files]); // legacy fallback
+
+  // drag & drop anywhere on the Media tab
+  const drop = el('media');
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.style.outline = '2px dashed var(--accent)'; drop.style.outlineOffset = '-6px'; });
+  drop.addEventListener('dragleave', () => { drop.style.outline = ''; });
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault(); drop.style.outline = '';
+    const files = [...(e.dataTransfer?.files || [])];
+    if (files.length) importFiles(files);
+  });
+
+  // auto-proxy mode: "all", "unsupported" (only what the browser can't play
+  // natively — playable originals are used directly until a proxy exists), or "off"
+  try { const v = localStorage.getItem('halide.edit.autoProxy'); if (v) el('autoProxy').value = v; } catch {}
+  // manual proxy generation — surfaces unless every clip is auto-proxied.
+  // "Missing" queues only clips without a proxy; "All" force-rebuilds everything linked.
+  const gpRow = el('genProxyRow');
+  const syncGenRow = () => gpRow?.classList.toggle('hidden', el('autoProxy').value === 'all');
+  el('autoProxy').addEventListener('change', () => {
+    try { localStorage.setItem('halide.edit.autoProxy', el('autoProxy').value); } catch {}
+    syncGenRow();
+  });
+  syncGenRow();
+  if (el('genProxyBtn')) el('genProxyBtn').onclick = () => {
+    const all = el('genProxyMode').value === 'all';
+    let n = 0;
+    for (const m of state.media) {
+      if (!m.file || m.removed) continue;
+      if (!all && m.proxyReady) continue;
+      queueProxy(m, all);
+      n++;
+    }
+    toast(n ? `Queued ${n} prox${n === 1 ? 'y' : 'ies'}` : 'Nothing to generate — all clips have proxies');
+  };
+
+  el('tsize').oninput = (e) => el('grid').style.setProperty('--tw', e.target.value + 'px');
+  el('search').oninput = renderGrid;
+
+  // sorting + thumbnail preview look (display-only LUT baked into thumbs)
+  const srt = el('mediaSort');
+  if (srt) {
+    srt.value = localStorage.getItem('halide.edit.mediaSort') || 'added';
+    srt.onchange = () => { localStorage.setItem('halide.edit.mediaSort', srt.value); renderGrid(); };
+  }
+  const tl = el('thumbLook');
+  if (tl) {
+    const rebuild = () => {
+      tl.innerHTML = '<option value="">Thumb look: none</option>';
+      for (const cat of LUT_CATEGORIES) {
+        if (!cat.luts.length) continue;
+        const og = document.createElement('optgroup'); og.label = cat.name;
+        for (const it of cat.luts) { const o = document.createElement('option'); o.value = it.name; o.textContent = it.name; og.appendChild(o); }
+        tl.appendChild(og);
+      }
+      tl.value = thumbLook && findLut(thumbLook) ? thumbLook : '';
+    };
+    rebuild();
+    if (tl.value) setThumbLook(tl.value);   // resolve the LUT for the saved pick
+    tl.onchange = () => setThumbLook(tl.value);
+    // user .cube loads register asynchronously — refresh the picker (and
+    // resolve a saved pick that just became available)
+    bus.on('luts:changed', () => { rebuild(); if (tl.value && !lookLut) setThumbLook(tl.value); });
+  }
+
+  // OPFS proxy-cache size + clear (proxyBytes existed but was never surfaced)
+  updateCacheStat();
+  const pc = el('proxyClear');
+  if (pc) pc.onclick = async () => {
+    if (!confirm('Clear the proxy cache? Loaded proxies keep working; missing ones rebuild on demand.')) return;
+    const ok = await clearProxies();
+    toast(ok ? 'Proxy cache cleared' : 'Could not clear cache', !ok);
+    updateCacheStat();
+  };
+
+  el('addToTl').onclick = () => { if (state.selectedMediaId) { appendClip(state.selectedMediaId); toast('Added to timeline'); } };
+  el('rebuildProxy').onclick = () => {
+    const m = getMedia(state.selectedMediaId);
+    if (m) { m.proxyReady = false; m.thumb = null; m.strip = null; queueProxy(m, true); }   // also refresh derived assets
+  };
+  el('removeMediaBtn').onclick = () => { if (state.selectedMediaId) removeMedia(state.selectedMediaId); };
+  initMultiBar();
+
+  bus.on('media:changed', renderGrid);
+  // fix crossed thumb/strip entries from older builds as projects load
+  bus.on('project:restored', () => { for (const m of state.media) classifyThumbs(m); });
+  renderGrid();
+}
+
+const VIDEO_EXT = /\.(mp4|mov|m4v|mkv|webm|avi|mts|m2ts|3gp|hevc|mcraw)$/i;
+
+// duration of an audio file, metadata only
+function audioDuration(url) {
+  return new Promise((resolve, reject) => {
+    const a = new Audio();
+    a.preload = 'metadata';
+    const done = (fn, v) => { clearTimeout(t); a.removeAttribute('src'); fn(v); };
+    const t = setTimeout(() => done(reject, new Error('audio metadata timed out')), 15000);
+    a.onloadedmetadata = () => done(resolve, isFinite(a.duration) ? a.duration : 0);
+    a.onerror = () => done(reject, new Error('the browser could not read this audio file'));
+    a.src = url;
+  });
+}
+
+// `explicit` = the user named these files (picker, drag-drop). A FOLDER import
+// is not explicit: camera rigs drop .wav next to the footage, and the old
+// blanket filter existed to keep those sidecars out of the pool. So audio is
+// imported when it was chosen and skipped when it was merely swept up.
+async function importFiles(files, { explicit = true } = {}) {
+  files = [...files];
+  const isVid = (f) => f.type.startsWith('video') || VIDEO_EXT.test(f.name);
+  const keep = files.filter((f) => isVid(f) || (explicit && isAudioFile(f)));
+  const skipped = files.length - keep.length;
+  if (!keep.length) return toast(skipped ? 'No video or audio files in the selection' : 'No files selected', true);
+  if (skipped) toast(`${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped`);
+  const vids = keep;
+
+  // PHASE 1 — index: every clip gets its pool card up front. Probing and proxy
+  // building follow in the background, so one slow/exotic file can never block
+  // the rest of the import (importing a folder of 6K ProRes used to stall).
+  const work = [];
+  for (const file of vids) {
+    console.log('[import]', file.name, '· type:', file.type || '(none)', '· size:', file.size);
+    // re-link: a restored-but-unlinked slot matching this file keeps its clips
+    const existing = state.media.find((x) => !x.file && x.name === file.name && x.size === file.size);
+    if (existing) {
+      existing.file = file; existing.handle = handleMap.get(file) || null;
+      work.push({ m: existing, file, relink: true });
+      continue;
+    }
+    const audioOnly = isAudioFile(file);
+    const m = addMedia({
+      size: file.size, path: pathMap.get(file) || file.webkitRelativePath || '',
+      name: file.name, file, handle: handleMap.get(file) || null, url: null,
+      width: 0, height: 0, duration: 0, thumb: null, playable: false,
+      kind: audioOnly ? 'audio' : 'video',
+      // audio has no picture to proxy — the mixer decodes the original
+      proxyReady: false, proxyUrl: null, proxyStatus: (!audioOnly && el('autoProxy').value === 'all') ? 'queued' : '',
+    });
+    work.push({ m, file, relink: false });
+  }
+  renderGrid();
+  toast(`Indexed ${work.length} clip${work.length === 1 ? '' : 's'}`);
+
+  // PHASE 2 — probe metadata per clip, then hand it to the proxy queue (whose
+  // ffmpeg tier also converts clips nothing native can decode)
+  for (const { m, file, relink } of work) {
+    if (m.removed) continue;
+    if (m.kind === 'audio') {
+      // duration off an <audio> element rather than decodeAudioData: metadata
+      // only, so a 60 MB album track doesn't get fully decoded into memory just
+      // to draw a pool card. The waveform (getPeaks) decodes lazily when a clip
+      // for it actually lands on the timeline.
+      m.url = URL.createObjectURL(file);
+      try { m.duration = await audioDuration(m.url); } catch (e) { console.warn('[import] audio probe failed', file.name, e); }
+      m.playable = true;
+      updateCard(m);
+      bus.emit('media:changed');
+      if (relink) toast('Re-linked ' + file.name);
+      continue;
+    }
+    if (isMcraw(file.name)) {
+      // RAW: <video>/demux can't read it — the wasm decoder supplies the
+      // metadata and the proxy becomes the only playable form of the clip
+      try {
+        const s = await openMcraw(file);
+        m.width = s.width; m.height = s.height; m.duration = s.duration;
+        if (s.f0.iso) m.rawIso = s.f0.iso;
+        if (s.f0.exposureTime) m.rawShutter = s.f0.exposureTime;   // ns
+        s.close();
+      } catch (e) { console.warn('[import] mcraw probe failed', file.name, e); }
+      updateCard(m);
+      bus.emit('media:changed');
+      if (relink) toast('Re-linked ' + file.name);
+      if (autoProxyFor(m) && !m.proxyReady) queueProxy(m, false);
+      continue;
+    }
+    try {
+      const meta = await probe(file);
+      m.url = meta.url; m.playable = meta.playable;
+      if (meta.width) { m.width = meta.width; m.height = meta.height; }
+      if (meta.duration && !m.duration) m.duration = meta.duration;
+      if (meta.thumb) m.thumb = meta.thumb;   // fresh thumb also on re-link
+      if (!m.width || !m.height) {
+        // real dimensions from the container header — WebCodecs often decodes
+        // what <video> won't, so 0×0 here is not "undecodable". Header-only,
+        // so big camera originals get dims too (the ffmpeg tier sizes its
+        // thread count from them).
+        try {
+          const d = await demuxHeader(file);
+          let W = d.width, H = d.height;
+          if (d.rotation === 90 || d.rotation === 270) { const t = W; W = H; H = t; }
+          if (W && H) { m.width = W; m.height = H; }
+          if (!m.duration && d.duration) m.duration = d.duration;
+        } catch (e) { console.log('[import] demux failed', file.name, e?.message || e); }
+      }
+    } catch (e) { console.warn('[import] probe failed', file.name, e); }
+    updateCard(m);
+    bus.emit('media:changed');
+    if (relink) toast('Re-linked ' + file.name);
+    if (autoProxyFor(m)) { if (!m.proxyReady) queueProxy(m, false); }
+    else if (m.proxyStatus === 'queued') { m.proxyStatus = ''; updateCard(m); }
+    else ensureStrip(m);   // no proxy coming — build the hover strip off the original
+  }
+}
+
+// visible ffmpeg.wasm status: header pill + a prominent progress banner
+function ffUI(text, pct) {
+  const box = el('ffStatus'), pill = el('ffPill');
+  const active = text && text !== 'done';
+  if (pill) {
+    pill.textContent = active ? 'ffmpeg ⏳' : (ffmpegLoaded() ? ('ffmpeg ✓ ' + (ffmpegMultithread() ? 'MT' : 'ST')) : 'ffmpeg —');
+    pill.classList.toggle('busy', !!active);
+    pill.classList.toggle('on', !active && ffmpegLoaded());
+  }
+  if (!box) return;
+  box.classList.remove('err');
+  if (!text || text === 'done') { box.classList.remove('show'); return; }
+  box.classList.add('show');
+  box.innerHTML = `<span class="ff-spin"></span> ffmpeg.wasm — ${text}${pct != null ? ` · ${Math.round(pct * 100)}%` : ''}`;
+}
+// persistent error (click to dismiss)
+function ffError(name, msg) {
+  const box = el('ffStatus'); const pill = el('ffPill');
+  if (pill) { pill.textContent = 'ffmpeg ✗'; pill.classList.remove('busy', 'on'); }
+  if (!box) return;
+  box.classList.add('show', 'err');
+  box.innerHTML = `<b>ffmpeg failed</b> — ${name}: ${msg} &nbsp; <span style="opacity:.6">(click to dismiss)</span>`;
+  box.onclick = () => { box.classList.remove('show', 'err'); box.onclick = null; };
+}
+
+function queueProxy(m, force) {
+  if (m.proxyReady && !force) return;
+  // ffmpeg.wasm tier-3 works even without a WebCodecs encoder, so always queue
+  m.proxyReady = false; m.proxyStatus = 'queued';
+  if (force) m._proxyForce = true;   // a rebuild must NOT resurrect the cached proxy
+  proxyQueue.push(m);
+  renderGrid();
+  runQueue();
+}
+
+const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(label || 'timed out')), ms))]);
+
+async function updateCacheStat() {
+  const s = el('proxyCache'); if (!s) return;
+  try {
+    const b = await withTimeout(proxyBytes(), 4000, 'opfs');
+    s.textContent = b ? `cache: ${(b / 1e6).toFixed(0)} MB` : 'cache: empty';
+  } catch { s.textContent = 'cache: ?'; }
+}
+
+async function runQueue() {
+  if (proxyBusy) return;
+  proxyBusy = true;
+  const prog = el('proxyProg');
+  try {
+    const targetH = parseInt(el('proxyH').value, 10) || 720;
+    // the sidebar bar shows the whole batch (clips done + this clip's share);
+    // each card shows its own clip
+    let first = true, m = null;
+    // queued-but-still-probing clips count too, so the total is the whole import
+    const setTotal = (p) => {
+      const total = qDone + 1 + stillQueued(m);
+      prog.firstElementChild.style.width = ((qDone + p) / total * 100).toFixed(1) + '%';
+    };
+    while (proxyQueue.length) {
+      if (!first) qDone++;   // the previous clip finished (or was skipped)
+      first = false;
+      m = proxyQueue.shift();
+      if (!m || !m.file || m.removed) { if (m) m.proxyStatus = m.file ? m.proxyStatus : 'unlinked'; continue; }
+      const key = proxyKey(m.file, targetH);
+      // status FIRST so the UI reflects progress even if the OPFS lookup is slow
+      m.proxyStatus = 'building';
+      el('proxyStat').textContent = `building ${qDone + 1}/${qDone + 1 + stillQueued(m)}`;
+      el('proxyStat').title = m.name;
+      prog.classList.remove('hidden'); setTotal(0); updateCard(m);
+      try {
+        // reuse a cached proxy from OPFS (timeout-guarded so a hung FS can't freeze the queue)
+        const cached = m._proxyForce ? null : await withTimeout(loadProxy(key), 4000, 'opfs').catch(() => null);
+        m._proxyForce = false;
+        if (cached) {
+          m.proxyBlob = cached; m.proxyUrl = URL.createObjectURL(cached); m.proxyKey = key;
+          m.proxyReady = true; m.proxyStatus = 'ready'; updateCard(m);
+          bus.emit('media:changed');   // autosave — the project must persist proxyKey
+          ensureStrip(m);
+          continue;
+        }
+        m.proxyProgress = 0;
+        const ctl = { cancelled: false, ffmpeg: false };
+        m._proxyCtl = ctl;
+        const res = await makeProxy(m.file, targetH,
+          (p) => {
+            setTotal(p);
+            m.proxyProgress = p;
+            const c = cards.get(m.id); const bar = c && c.querySelector('.card-prog i');
+            if (bar) bar.style.width = Math.round(p * 100) + '%';
+          },
+          (text, pct) => ffUI(text, pct),
+          (m.width || 0) * (m.height || 0), ctl);
+        m._proxyCtl = null;
+        if (m.removed) continue;
+        m.proxyUrl = res.url; m.proxyBlob = res.blob; m.proxyW = res.width; m.proxyH = res.height;
+        m.proxyKey = key; m.proxyReady = true; m.proxyStatus = 'ready'; m.proxyMethod = res.method; m.proxyError = null;
+        // adopt poster/strip/dims/duration off the H.264 proxy via WebCodecs —
+        // works in HIDDEN tabs too (the <video>-based probe needs a visible
+        // tab to present frames, so thumbs used to go missing when conversions
+        // finished in the background)
+        if (!m.thumb && res.thumb) m.thumb = res.thumb;   // built during conversion
+        if (!m.strip && res.strip) m.strip = res.strip;
+        if ((!m.thumb || !m.strip || !m.width || !m.duration) && res.blob) {
+          try {
+            const a = await analyzeProxy(res.blob);
+            if (!m.width && a.width) { m.width = a.width; m.height = a.height; }
+            if (!m.duration && a.duration) m.duration = a.duration;
+            if (!m.thumb && a.thumb) m.thumb = a.thumb;
+            if (!m.strip && a.strip) m.strip = a.strip;
+          } catch {}
+          if (!m.thumb) {   // last resort: <video> probe (visible tabs only)
+            try {
+              const pm = await probe(res.blob);
+              if (pm.thumb) m.thumb = pm.thumb;
+              if (!m.width && pm.width) { m.width = pm.width; m.height = pm.height; }
+              if (!m.duration && pm.duration) m.duration = pm.duration;
+              if (pm.url) URL.revokeObjectURL(pm.url);
+            } catch {}
+          }
+        }
+        withTimeout(saveProxy(key, res.blob), 8000, 'opfs-save').catch(() => {}); // fire-and-forget
+        // autosave NOW so proxyKey survives a hard stop — without this the key
+        // only reached IndexedDB when something else happened to trigger a save,
+        // and killing the PWA left finished proxies "relink" on next launch
+        bus.emit('media:changed');
+        ensureStrip(m);
+        if (res.method === 'video') toast(`Proxy built for ${m.name} via <video> fallback`, false, 3500);
+      } catch (e) {
+        m._proxyCtl = null;
+        if (m.removed) continue;   // deleted mid-convert — cancellation, not failure
+        m.proxyStatus = 'failed'; m.proxyError = e.message || String(e);
+        console.warn('proxy failed', m.name, e);
+        toast(`Proxy failed — ${m.name}: ${m.proxyError}`, true, 6500);
+      }
+      updateCard(m);
+    }
+    if (!first) qDone++;   // the last clip of this run
+  } finally {
+    proxyBusy = false;
+    // more clips of the batch are still probing — keep the bar and the count
+    if (!stillQueued()) { qDone = 0; prog.classList.add('hidden'); el('proxyStat').textContent = 'idle'; }
+    ffUI();
+    updateCacheStat();
+  }
+}
+
+function makeCard(m) {
+  const d = document.createElement('div');
+  d.dataset.id = m.id;
+  d.innerHTML = `<div class="thumbbox"><span class="proxy-badge"></span><span class="dur-badge"></span><span class="card-spin"></span><div class="card-prog"><i></i></div></div>
+    <div class="meta"><div class="cap"></div><div class="sub"></div></div>
+    <span class="clip-del" title="Remove from project">✕</span>`;
+  d.querySelector('.clip-del').onclick = (e) => { e.stopPropagation(); removeMedia(m.id); };
+  d.onclick = (e) => cardClick(m, e);
+  // touch: long-press enters selection mode, then taps toggle
+  d.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch') return;
+    const x0 = e.clientX, y0 = e.clientY;
+    let moved = false;
+    const t = setTimeout(() => { if (!moved) { mselMode = true; msToggle(m.id); } }, 450);
+    const mv = (ev) => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 8) { moved = true; clearTimeout(t); } };
+    const done = () => { clearTimeout(t); window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', done); window.removeEventListener('pointercancel', done); };
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', done); window.addEventListener('pointercancel', done);
+  });
+  wireHoverScrub(m, d.querySelector('.thumbbox'));
+  return d;
+}
+
+// ---- multi-select (ctrl/cmd-click, shift-click range, touch long-press) ----
+const msel = new Set();
+let mselAnchor = null;
+let mselMode = false;   // touch selection mode: plain taps toggle
+
+function gridOrder() { return [...el('grid').children].map((c) => c.dataset.id); }
+function msToggle(id) {
+  if (msel.has(id)) msel.delete(id); else { msel.add(id); mselAnchor = id; }
+  if (!msel.size) mselMode = false;
+  msRefresh();
+}
+function msClear() { msel.clear(); mselMode = false; mselAnchor = null; msRefresh(); }
+function msRefresh() {
+  for (const [id, card] of cards) card.classList.toggle('msel', msel.has(id));
+  const bar = el('msBar'); if (!bar) return;
+  bar.classList.toggle('on', msel.size > 0);
+  el('msCount').textContent = `${msel.size} selected`;
+  if (msel.size) el('msTransform').selectedIndex = 0;
+}
+function cardClick(m, e) {
+  if (e.ctrlKey || e.metaKey) { msToggle(m.id); return; }
+  if (e.shiftKey && mselAnchor) {
+    const order = gridOrder();
+    const a = order.indexOf(mselAnchor), b = order.indexOf(m.id);
+    if (a >= 0 && b >= 0) for (let i = Math.min(a, b); i <= Math.max(a, b); i++) msel.add(order[i]);
+    msRefresh();
+    return;
+  }
+  if (mselMode) { msToggle(m.id); return; }
+  if (msel.size) msClear();
+  selectMedia(m.id);
+}
+function initMultiBar() {
+  if (!el('msBar')) return;
+  el('msClear').onclick = msClear;
+  el('msDelete').onclick = () => {
+    const n = msel.size; if (!n) return;
+    for (const id of [...msel]) removeMedia(id);
+    msClear();
+    toast(`Removed ${n} clip${n === 1 ? '' : 's'}`);
+  };
+  // per-media input transform default — mixed-camera projects set Canon and
+  // Sony batches separately; existing timeline clips of the media follow
+  el('msTransform').onchange = () => {
+    const v = el('msTransform').value; if (!v) return;
+    let clipN = 0;
+    for (const id of msel) { const m = getMedia(id); if (m) m.inputTransform = v; }
+    for (const tr of state.tracks.video) for (const c of tr.clips) {
+      if (c.mediaId && msel.has(c.mediaId) && state.grades[c.id]) { state.grades[c.id].inputTransform = v; clipN++; }
+    }
+    if (engine) engine.markGradeDirty();
+    bus.emit('timeline:changed');
+    bus.emit('media:changed');
+    toast(`Input transform set for ${msel.size} clip${msel.size === 1 ? '' : 's'}` + (clipN ? ` (${clipN} on the timeline)` : ''));
+  };
+}
+
+// ---- hover scrub (desktop): sweep the mouse across a card's thumb to preview
+// the clip. One shared <video> hops between cards; the all-intra H.264 proxy
+// makes currentTime seeks effectively instant. Mouse-only (hover+fine pointer).
+const canHoverScrub = matchMedia('(hover:hover) and (pointer:fine)').matches;
+export const STRIP_FRAMES = 10;
+let scrubV = null;
+
+// build (once) the persisted 10-frame filmstrip for a clip — proxy preferred,
+// original as fallback. media:changed persists it via autosave.
+export async function ensureStrip(m) {
+  if (m.strip || m._stripBusy) return;
+  const src = m.proxyBlob || ((m.playable && m.file) ? m.file : null);
+  if (!src) return;
+  m._stripBusy = true;
+  try {
+    // WebCodecs path first when a proxy exists — background-tab safe
+    if (m.proxyBlob) {
+      try {
+        const a = await analyzeProxy(m.proxyBlob);
+        if (a.strip) {
+          m.strip = a.strip;
+          if (!m.thumb && a.thumb) m.thumb = a.thumb;
+          bus.emit('media:changed');
+          return;
+        }
+      } catch {}
+    }
+    if (!m.duration) return;
+    const s = await makeStrip(src, STRIP_FRAMES);
+    if (s) { m.strip = s; bus.emit('media:changed'); }
+  } finally { m._stripBusy = false; }
+}
+
+// ---- thumbnail preview look: bake a conversion/creative LUT into DISPLAY
+// copies of the poster + filmstrip so log footage previews graded. Originals
+// (m.thumb / m.strip) are never touched; caches drop when the look changes ----
+let thumbLook = localStorage.getItem('halide.edit.thumbLook') || '';
+let lookLut = null;
+let lookGen = 0;
+const lookCache = new Map();   // mediaId -> { thumb, strip } (baked data-URLs)
+
+// trilinear sample of a {size,data} float LUT at encoded rgb 0..1
+function sampleLut(lut, r, g, b) {
+  const s = lut.size, d = lut.data, mx = s - 1;
+  const fx = Math.min(mx, Math.max(0, r * mx)), fy = Math.min(mx, Math.max(0, g * mx)), fz = Math.min(mx, Math.max(0, b * mx));
+  const x0 = fx | 0, y0 = fy | 0, z0 = fz | 0;
+  const x1 = Math.min(mx, x0 + 1), y1 = Math.min(mx, y0 + 1), z1 = Math.min(mx, z0 + 1);
+  const tx = fx - x0, ty = fy - y0, tz = fz - z0;
+  const at = (x, y, z) => ((z * s + y) * s + x) * 4;
+  const out = [0, 0, 0];
+  for (let c = 0; c < 3; c++) {
+    const c000 = d[at(x0, y0, z0) + c], c100 = d[at(x1, y0, z0) + c];
+    const c010 = d[at(x0, y1, z0) + c], c110 = d[at(x1, y1, z0) + c];
+    const c001 = d[at(x0, y0, z1) + c], c101 = d[at(x1, y0, z1) + c];
+    const c011 = d[at(x0, y1, z1) + c], c111 = d[at(x1, y1, z1) + c];
+    const c00 = c000 + (c100 - c000) * tx, c10 = c010 + (c110 - c010) * tx;
+    const c01 = c001 + (c101 - c001) * tx, c11 = c011 + (c111 - c011) * tx;
+    const c0 = c00 + (c10 - c00) * ty, c1 = c01 + (c11 - c01) * ty;
+    out[c] = c0 + (c1 - c0) * tz;
+  }
+  return out;
+}
+
+async function bakeLook(dataURL, lut) {
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataURL; });
+  const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(img, 0, 0);
+  const id = cx.getImageData(0, 0, c.width, c.height), d = id.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const o = sampleLut(lut, d[i] / 255, d[i + 1] / 255, d[i + 2] / 255);
+    d[i] = o[0] * 255; d[i + 1] = o[1] * 255; d[i + 2] = o[2] * 255;
+  }
+  cx.putImageData(id, 0, 0);
+  return c.toDataURL('image/jpeg', 0.7);
+}
+
+let bakedT = 0;
+function bakeOne(m) {
+  if (!thumbLook || !lookLut || m._lookBusy || lookCache.has(m.id)) return;
+  if (!m.thumb && !m.strip) return;
+  m._lookBusy = true;
+  const gen = lookGen;
+  (async () => {
+    try {
+      const e = {};
+      if (m.strip) e.strip = await bakeLook(m.strip, lookLut);
+      if (m.thumb) e.thumb = await bakeLook(m.thumb, lookLut);
+      if (gen === lookGen) {
+        lookCache.set(m.id, e);
+        updateCard(m);
+        // pool refresh, debounced — media:changed would spam the autosave
+        const now = performance.now();
+        if (now - bakedT > 300) { bakedT = now; bus.emit('thumbs:baked'); }
+        else setTimeout(() => bus.emit('thumbs:baked'), 350);
+      }
+    } catch {}
+    m._lookBusy = false;
+  })();
+}
+
+function setThumbLook(name) {
+  thumbLook = name || '';
+  localStorage.setItem('halide.edit.thumbLook', thumbLook);
+  lookGen++;
+  lookCache.clear();
+  lookLut = null;
+  if (thumbLook) { const def = findLut(thumbLook); if (def) { try { lookLut = def.get(); } catch {} } }
+  renderGrid();               // updateCard → bakeOne per visible clip
+  bus.emit('thumbs:baked');   // pool falls back to originals meanwhile
+}
+
+// ---- thumb/strip self-heal: older builds crossed the fields — a filmstrip
+// SPRITE saved as m.thumb (renders as a squeezed striped bar) or a plain
+// POSTER saved as m.strip (the 1000% strip-CSS blows it up into smeared
+// bands). Classify both by ACTUAL image geometry once per clip and repair. ----
+const imgOf = (src) => new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; });
+
+async function classifyThumbs(m) {
+  if (m._thumbClass || (!m.thumb && !m.strip)) return;
+  m._thumbClass = true;
+  try {
+    let changed = false;
+    if (m.strip) {
+      const im = await imgOf(m.strip);
+      if (!im || im.width / Math.max(1, im.height) < 6) {   // not sprite-shaped
+        if (!m.thumb && im) m.thumb = m.strip;
+        m.strip = null;
+        changed = true;
+      }
+    }
+    if (m.thumb) {
+      const im = await imgOf(m.thumb);
+      if (im && im.width / Math.max(1, im.height) > 6) {    // sprite stored as poster
+        if (!m.strip) m.strip = m.thumb;
+        const fw = im.width / STRIP_FRAMES;
+        const c = document.createElement('canvas');
+        c.width = 640; c.height = Math.max(2, Math.round(640 * im.height / fw));
+        c.getContext('2d').drawImage(im, Math.floor(STRIP_FRAMES / 2) * fw, 0, fw, im.height, 0, 0, c.width, c.height);
+        m.thumb = c.toDataURL('image/jpeg', 0.7);
+        changed = true;
+      } else if (!im) { m.thumb = null; changed = true; }
+    }
+    if (changed) {
+      updateCard(m);
+      bus.emit('thumbs:baked');
+      if (!m.strip) ensureStrip(m);   // rebuild a real sprite (WebCodecs path)
+      bus.emit('media:changed');      // persist the repair
+    }
+  } catch {}
+}
+
+// Default card thumb: the MIDDLE frame of the hover filmstrip when it exists —
+// a mid-shot frame represents the clip far better than a first-frame poster.
+// Falls back to the poster until the strip is built.
+export function thumbStyle(m) {
+  const lk = thumbLook ? lookCache.get(m.id) : null;
+  const strip = (lk && lk.strip) || m.strip;
+  const thumb = (lk && lk.thumb) || m.thumb;
+  if (strip) {
+    // COVER-crop the middle sprite frame into the 16:9 box instead of
+    // stretching it (`N00% 100%` distorted anything that isn't 16:9 — 2.56:1
+    // cine footage rendered visibly squashed).
+    const N = STRIP_FRAMES, mid = Math.floor(N / 2);
+    const ar = (m.width && m.height) ? m.width / m.height : 16 / 9;
+    const box = 16 / 9;
+    if (ar >= box) {
+      // wide source: frame height fills the box, sides crop. k = box widths
+      // per frame width; position maths in frame-width units.
+      const k = Math.min(1, box / ar);
+      const p = ((mid + (1 - k) / 2) / (N - k) * 100).toFixed(2);
+      return { image: `url(${strip})`, size: 'auto 100%', position: p + '% 50%' };
+    }
+    // tall source: frame width fills the box, top/bottom crop
+    const p = (mid / (N - 1) * 100).toFixed(2);
+    return { image: `url(${strip})`, size: (N * 100) + '% auto', position: p + '% 50%' };
+  }
+  if (thumb) return { image: `url(${thumb})`, size: '', position: '' };
+  return null;
+}
+export function applyThumbStyle(elm, m) {
+  const t = thumbStyle(m);
+  elm.style.backgroundImage = t ? t.image : '';
+  elm.style.backgroundSize = t ? t.size : '';
+  elm.style.backgroundPosition = t ? t.position : '';
+}
+
+export function wireHoverScrub(m, tb) {
+  if (!canHoverScrub) return;
+  tb.addEventListener('pointerenter', (e) => {
+    if (e.pointerType && e.pointerType !== 'mouse') return;
+    // filmstrip first: works with no file/proxy loaded at all. Live <video>
+    // is the fallback while a clip has no strip yet.
+    if (m.strip) {
+      const ov = document.createElement('div');
+      ov.className = 'scrub-strip';
+      ov.style.backgroundImage = `url(${m.strip})`;
+      ov.style.backgroundSize = (STRIP_FRAMES * 100) + '% 100%';
+      tb.insertBefore(ov, tb.firstChild);   // badges (z-index 2) stay on top
+    } else {
+      const src = (m.proxyReady && m.proxyUrl) || (m.playable && m.url) || null;
+      if (!src || !m.duration) return;
+      if (!scrubV) {
+        scrubV = document.createElement('video');
+        scrubV.muted = true; scrubV.playsInline = true; scrubV.preload = 'auto';
+        scrubV.className = 'scrub-vid';
+      }
+      if (scrubV.dataset.src !== src) { scrubV.src = src; scrubV.dataset.src = src; }
+      tb.insertBefore(scrubV, tb.firstChild);
+    }
+    let line = tb.querySelector('.scrub-line');
+    if (!line) { line = document.createElement('i'); line.className = 'scrub-line'; tb.appendChild(line); }
+    tb.classList.add('scrubbing');
+  });
+  tb.addEventListener('pointermove', (e) => {
+    const strip = tb.querySelector('.scrub-strip');
+    if (!strip && !(scrubV && scrubV.parentElement === tb)) return;
+    const r = tb.getBoundingClientRect();
+    const f = clamp((e.clientX - r.left) / Math.max(1, r.width), 0, 0.999);
+    const line = tb.querySelector('.scrub-line');
+    if (line) line.style.left = (f * 100).toFixed(1) + '%';
+    if (strip) {
+      const idx = Math.min(STRIP_FRAMES - 1, Math.floor(f * STRIP_FRAMES));
+      strip.style.backgroundPosition = (idx / (STRIP_FRAMES - 1) * 100) + '% 50%';
+    } else {
+      const t = f * (m.duration || scrubV.duration || 0);
+      if (Math.abs((scrubV.currentTime || 0) - t) > 0.04) { try { scrubV.currentTime = t; } catch {} }
+    }
+  });
+  tb.addEventListener('pointerleave', () => {
+    tb.querySelector('.scrub-strip')?.remove();
+    if (scrubV && scrubV.parentElement === tb) scrubV.remove();
+    tb.querySelector('.scrub-line')?.remove();
+    tb.classList.remove('scrubbing');
+  });
+}
+
+// Update ONE card in place — so a clip lights up with its thumbnail the moment
+// its proxy finishes (grayscale→colour + a one-shot glow), without a full
+// re-render resetting every animation. Sortcut's ingest pattern.
+export function updateCard(m, card) {
+  card = card || cards.get(m.id); if (!card) return;
+  const st = m.proxyStatus;
+  const pend = st === 'queued' || st === 'building';   // unlinked = idle, no spinner
+  card.className = 'clip'
+    + (m.kind === 'audio' ? ' is-audio' : '')
+    + (m.id === state.selectedMediaId ? ' active' : '')
+    + (msel.has(m.id) ? ' msel' : '')
+    + (pend ? ' proxy-pending' : '')
+    + (st === 'building' ? ' proxy-building' : '')
+    + (st === 'unlinked' ? ' proxy-unlinked' : '')
+    + (st === 'failed' ? ' proxy-failed' : '');
+  if (m.proxyReady && !freshSeen.has(m.id)) {
+    freshSeen.add(m.id); card.classList.add('fresh');
+    setTimeout(() => card.classList.remove('fresh'), 1500);
+  }
+  const tb = card.querySelector('.thumbbox');
+  tb.classList.toggle('nothumb', !m.thumb && !m.strip);
+  applyThumbStyle(tb, m);
+  bakeOne(m);         // no-op unless a thumbnail look is active and unbaked
+  classifyThumbs(m);  // one-time geometry check heals crossed thumb/strip data
+  // per-clip proxy progress bar (replaces the spinner while building)
+  const pbar = card.querySelector('.card-prog');
+  if (pbar) {
+    const building = st === 'building';
+    pbar.style.display = building ? 'block' : 'none';
+    pbar.firstElementChild.style.width = Math.round((m.proxyProgress || 0) * 100) + '%';
+  }
+  const badge = card.querySelector('.proxy-badge');
+  const bt = st === 'ready' ? 'proxy' : st === 'building' ? 'proxy…' : st === 'queued' ? 'queued'
+    : st === 'failed' ? 'proxy ✗' : st === 'unlinked' ? 'relink' : '';
+  badge.textContent = bt;
+  badge.className = 'proxy-badge ' + (st === 'ready' ? 'ready' : st === 'failed' ? 'failed' : 'pending');
+  badge.style.display = bt ? '' : 'none';
+  card.querySelector('.dur-badge').textContent = fmtShort(m.duration);
+  card.querySelector('.cap').textContent = m.name;
+  // audio has no frame size — "?×?" there reads as a failed probe
+  card.querySelector('.sub').textContent = m.kind === 'audio'
+    ? `Audio · ${fmtShort(m.duration || 0)}`
+    : `${m.width || '?'}×${m.height || '?'}`
+      + (st === 'failed' ? ' · failed' : m.proxyMethod === 'ffmpeg' ? ' · sw' : m.proxyMethod === 'video' ? ' · sw' : '');
+  card.title = st === 'failed' ? 'Proxy failed: ' + (m.proxyError || 'unknown')
+    : (st === 'unlinked' && m.handle) ? 'Click to restore file access' : '';
+}
+
+function renderGrid() {
+  const grid = el('grid'), empty = el('gridEmpty');
+  const q = (el('search')?.value || '').toLowerCase();
+  let items = state.media.filter((m) => m.name.toLowerCase().includes(q));
+  if (binFilter != null) items = items.filter((m) => { const d = dirOf(m); return d === binFilter || d.startsWith(binFilter + '/'); });
+  const sort = el('mediaSort')?.value || 'added';
+  if (sort !== 'added') {
+    const cmp = {
+      'name': (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }),
+      'name-d': (a, b) => b.name.localeCompare(a.name, undefined, { numeric: true }),
+      'dur': (a, b) => (a.duration || 0) - (b.duration || 0),
+      'dur-d': (a, b) => (b.duration || 0) - (a.duration || 0),
+      'size-d': (a, b) => (b.size || 0) - (a.size || 0),
+    }[sort];
+    if (cmp) items = [...items].sort(cmp);
+  }
+  empty.style.display = state.media.length ? 'none' : '';
+  grid.style.display = state.media.length ? '' : 'none';
+  const seen = new Set();
+  let prev = null;
+  for (const m of items) {
+    let card = cards.get(m.id);
+    if (!card) { card = makeCard(m); cards.set(m.id, card); }
+    updateCard(m, card);
+    const want = prev ? prev.nextSibling : grid.firstChild;
+    if (card !== want) grid.insertBefore(card, want);
+    prev = card; seen.add(m.id);
+  }
+  for (const [id, card] of cards) if (!seen.has(id)) { card.remove(); cards.delete(id); }
+  el('mediaCount').textContent = `${state.media.length} clip${state.media.length === 1 ? '' : 's'}`;
+  renderBins();
+  bus.emit('export:refresh');
+}
+
+// folder-bin tree built from each clip's relative path
+function renderBins() {
+  const box = el('binList'); if (!box) return;
+  const tree = { kids: new Map(), count: 0 };
+  for (const m of state.media) {
+    tree.count++;
+    let node = tree, acc = '';
+    for (const part of dirOf(m).split('/').filter(Boolean)) {
+      acc = acc ? acc + '/' + part : part;
+      if (!node.kids.has(part)) node.kids.set(part, { name: part, path: acc, kids: new Map(), count: 0 });
+      node = node.kids.get(part); node.count++;
+    }
+  }
+  box.innerHTML = '';
+  box.appendChild(binRow('All media', null, tree.count, binFilter === null, 0));
+  (function walk(node, depth) {
+    for (const kid of node.kids.values()) { box.appendChild(binRow(kid.name, kid.path, kid.count, binFilter === kid.path, depth)); walk(kid, depth + 1); }
+  })(tree, 1);
+}
+function binRow(name, path, count, on, depth) {
+  const r = document.createElement('div');
+  r.className = 'binrow' + (on ? ' on' : '');
+  r.style.paddingLeft = (8 + depth * 13) + 'px';
+  r.innerHTML = `<svg class="ic" style="opacity:.65;width:13px;height:13px;flex:none"><use href="#i-folder"/></svg>
+    <span class="bname" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span><span class="bn">${count}</span>`;
+  r.onclick = () => { binFilter = path; renderGrid(); };
+  return r;
+}
+
+// restore a saved project: rebuild media (proxies from OPFS), timeline, grades
+// Tear down the current project's in-memory state + object URLs before loading
+// another. Leaves the OPFS proxy cache intact (it's shared across projects).
+export function resetForNewProject() {
+  for (const m of state.media) { try { if (m.url) URL.revokeObjectURL(m.url); if (m.proxyUrl) URL.revokeObjectURL(m.proxyUrl); } catch {} }
+  proxyQueue.length = 0;
+  state.media = [];
+  state.tracks = { video: [{ id: uid('v'), clips: [] }], audio: [{ id: uid('a'), clips: [] }] };
+  state.grades = {};
+  state.markers = [];
+  state.selectedMediaId = null;
+  state.selectedClipId = null;
+  state.playhead = 0;
+  cards.clear();
+  el('mediaInspector').style.display = 'none';
+  renderGrid();
+}
+
+export async function restore(proj) {
+  if (!proj || !proj.media) return;
+  state.fps = proj.fps || 30;
+  for (const pm of proj.media) {
+    const m = {
+      id: pm.id, name: pm.name, size: pm.size, path: pm.path || '', file: null, url: null,
+      width: pm.width, height: pm.height, duration: pm.duration, thumb: pm.thumb,
+      strip: pm.strip || null, handle: pm.handle || null,
+      kind: pm.kind || 'video',
+      proxyKey: pm.proxyKey || null, proxyW: pm.proxyW, proxyH: pm.proxyH,
+      proxyReady: false, proxyStatus: 'unlinked',
+    };
+    // a key from an older proxy generation names a file we must not reuse (see
+    // PROXY_GEN) — drop it and let the rebuild below produce a current one
+    let key = isCurrentProxyKey(pm.proxyKey) ? pm.proxyKey : null;
+    let blob = key ? await loadProxy(key) : null;
+    if (!blob) {
+      // the saved project may predate the proxy finishing (hard stop before
+      // autosave) — but the OPFS key is deterministic (name__size__height), so
+      // probe the likely candidates and reclaim the cached proxy anyway
+      const targetH = parseInt(el('proxyH')?.value, 10) || 720;
+      const heights = [...new Set([pm.proxyH, targetH, 720, 540, 1080].filter(Boolean))];
+      for (const h of heights) {
+        const k = proxyKey({ name: pm.name, size: pm.size }, h);
+        if (k === pm.proxyKey) continue;   // already tried
+        blob = await loadProxy(k);
+        if (blob) { key = k; break; }
+      }
+    }
+    if (blob) { m.proxyKey = key; m.proxyBlob = blob; m.proxyUrl = URL.createObjectURL(blob); m.proxyReady = true; m.proxyStatus = 'ready'; }
+    state.media.push(m);
+  }
+  if (proj.tracks && proj.tracks.video) state.tracks = proj.tracks;
+  else if (proj.timeline) { // migrate v1 single-track projects
+    let t = 0; const clips = proj.timeline.map((c) => { const start = t; t += Math.max(0.02, (c.out - c.in)); return { ...c, start, speed: 1, volume: 1, mute: false, pitch: 0, kind: 'video' }; });
+    state.tracks = { video: [{ id: 'v0', clips }], audio: [{ id: 'a0', clips: [] }] };
+  }
+  // re-acquire originals from persisted handles — silent path only (permission
+  // already granted, e.g. installed-PWA persistent permissions). 'prompt' needs
+  // a user gesture; clicking the relink card handles that (relinkFromHandle).
+  for (const m of state.media) {
+    if (m.file || !m.handle) continue;
+    try {
+      if ((await m.handle.queryPermission({ mode: 'read' })) !== 'granted') continue;
+      await adoptHandleFile(m);
+    } catch {}
+  }
+  state.project = proj.project || { format: '16:9', height: 1080 };
+  bus.emit('project:restored');
+  state.markers = proj.markers || [];
+  state.masterVolume = proj.masterVolume ?? 1;
+  const mv = el('tlMasterVol'); if (mv) mv.value = state.masterVolume;
+  state.grades = proj.grades || {};
+  // re-resolve bundled LUTs from their saved name (data wasn't persisted)
+  for (const g of Object.values(state.grades)) {
+    if (g && g.lutName) { const l = findLut(g.lutName); if (l) { try { g.lut = l.get(); } catch {} } }
+  }
+  bus.emit('media:changed'); bus.emit('timeline:changed');
+  renderGrid();
+  // self-heal black/missing thumbs from the proxy in the background — projects
+  // saved before the probe fix carry solid-black poster data-URLs
+  (async () => {
+    let healed = 0;
+    for (const m of state.media) {
+      if (!m.proxyBlob) continue;
+      if (!m.thumb || (await thumbIsBlack(m.thumb))) {
+        try {
+          const pm = await probe(m.proxyBlob);
+          if (pm.thumb) { m.thumb = pm.thumb; updateCard(m); healed++; }
+          if (pm.url) URL.revokeObjectURL(pm.url);
+        } catch {}
+      }
+      await ensureStrip(m);   // backfill hover filmstrips for older projects
+    }
+    if (healed) bus.emit('media:changed');   // persist the regenerated thumbs
+  })();
+  const unlinked = state.media.filter((m) => !m.proxyReady).length;
+  if (state.media.length) toast(`Restored project — ${state.media.length} clips${unlinked ? `, ${unlinked} need re-import` : ''}`, false, 3500);
+}
+
+function removeMedia(id) {
+  const m = getMedia(id); if (!m) return;
+  m.removed = true;
+  if (msel.delete(id)) msRefresh();
+  // abort an IN-FLIGHT conversion — without this the transcode kept running
+  // under the hood after the clip left the pool
+  if (m._proxyCtl) {
+    m._proxyCtl.cancelled = true;
+    if (m._proxyCtl.ffmpeg) abortTranscode();
+  }
+  // drop the clip(s) that reference it (and their grades)
+  for (const tr of [...state.tracks.video, ...state.tracks.audio]) {
+    for (let i = tr.clips.length - 1; i >= 0; i--) {
+      if (tr.clips[i].mediaId === id) { delete state.grades[tr.clips[i].id]; tr.clips.splice(i, 1); }
+    }
+  }
+  const qi = proxyQueue.indexOf(m); if (qi >= 0) proxyQueue.splice(qi, 1);
+  try { if (m.url) URL.revokeObjectURL(m.url); if (m.proxyUrl) URL.revokeObjectURL(m.proxyUrl); } catch {}
+  const idx = state.media.indexOf(m); if (idx >= 0) state.media.splice(idx, 1);
+  if (state.selectedMediaId === id) { state.selectedMediaId = null; el('mediaInspector').style.display = 'none'; }
+  bus.emit('media:changed'); bus.emit('timeline:changed');
+  toast('Removed ' + m.name);
+}
+
+// is a stored thumb (near-)black? Thumbs captured before the black-frame probe
+// fix were saved as solid black data-URLs and must be regenerated.
+function thumbIsBlack(dataUrl) {
+  return new Promise((res) => {
+    if (!dataUrl) return res(true);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        const cx = c.getContext('2d', { willReadFrequently: true });
+        cx.drawImage(img, 0, 0);
+        const d = cx.getImageData(0, 0, c.width, c.height).data;
+        let s = 0, n = 0;
+        for (let i = 0; i < d.length; i += 4 * 13) { s += d[i] + d[i + 1] + d[i + 2]; n += 3; }
+        res(s / Math.max(1, n) < 4);
+      } catch { res(false); }
+    };
+    img.onerror = () => res(false);
+    img.src = dataUrl;
+  });
+}
+
+// take the File back from a stored handle; resume the proxy build if needed
+async function adoptHandleFile(m) {
+  const f = await m.handle.getFile();
+  m.file = f;
+  // playable isn't persisted — probe again rather than assume, so an HEVC
+  // original isn't treated as natively decodable (by export or the proxy mode)
+  const meta = await probe(f).catch(() => null);
+  m.url = meta?.url || URL.createObjectURL(f); m.playable = meta ? meta.playable : true;
+  if (m.proxyReady) return;
+  m.proxyStatus = null;
+  if (autoProxyFor(m)) queueProxy(m, false); else updateCard(m);
+}
+
+// whether the auto-proxy setting wants a proxy for this clip (after probing)
+function autoProxyFor(m) {
+  const mode = el('autoProxy')?.value || 'unsupported';
+  if (mode === 'all') return true;
+  if (mode === 'unsupported') return !m.playable || isMcraw(m.name);
+  return false;
+}
+
+// gesture path: 'prompt' permission needs a user click — used by the card click
+async function relinkFromHandle(m) {
+  if (!m || m.file || !m.handle) return false;
+  try {
+    let perm = await m.handle.queryPermission({ mode: 'read' });
+    if (perm === 'prompt') perm = await m.handle.requestPermission({ mode: 'read' });
+    if (perm !== 'granted') return false;
+    await adoptHandleFile(m);
+    bus.emit('media:changed');
+    return true;
+  } catch { return false; }
+}
+
+function selectMedia(id) {
+  state.selectedMediaId = id;
+  const m = getMedia(id);
+  if (m && !m.file && m.handle) {
+    relinkFromHandle(m).then((ok) => { if (ok) { toast('Re-linked ' + m.name); selectMedia(id); } });
+  }
+  el('mediaInspector').style.display = m ? '' : 'none';
+  if (!m) return;
+  const v = el('mediaPreview');
+  const src = (m.proxyReady && m.proxyUrl) ? m.proxyUrl : m.url;
+  if (src) v.src = src; else v.removeAttribute('src');
+  el('mediaMeta').innerHTML = [
+    `<b>${m.name}</b>`,
+    `${m.width}×${m.height} · ${fmtTC(m.duration)}`,
+    `proxy: ${m.proxyStatus || 'none'}${m.proxyMethod ? ` (${m.proxyMethod})` : ''}`,
+    m.proxyError ? `<span style="color:var(--danger)">${m.proxyError}</span>` : '',
+  ].filter(Boolean).join('<br>');
+  renderGrid();
+}

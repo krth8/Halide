@@ -1,0 +1,203 @@
+import '../shared/theme.css';
+import './styles.css';
+import './halide.css';
+import { boot } from '../shared/boot';
+import { I } from './ui/icons';
+import { clone, type Item } from './model';
+import { canPickDir, fileKey, fromDrop, kindOf, loadItem, pickDirectory, pickFiles, type Picked } from './media';
+import { S, emit, on, restore, select } from './state';
+import * as store from './store';
+import { keepFiles, loadSession, lockedDirs, pruneFiles, reopen, saveSession, unlock, type Session } from './session';
+import { $, h, isPhone, toast } from './ui/dom';
+import { buildReel, refresh, setAddHandler, setRemoveHandler } from './ui/reel';
+import { build } from './ui/panel';
+import { draw } from './ui/stage';
+import { openExport } from './ui/exportSheet';
+
+let nextId = 1;
+
+function makeItem(key: string, name: string, kind: Item['kind'], file: File): Item {
+  const saved = S.edits[key];
+  return {
+    id: nextId++, key, name, file, kind,
+    override: saved ? clone(saved.override) : {}, trim: saved?.trim ? { ...saved.trim } : null,
+    masks: saved?.masks ? clone(saved.masks) : [], motion: saved?.motion ?? null,
+    duration: 0, width: 0, height: 0, preview: null, thumb: null, lum: 0, status: 'loading',
+  };
+}
+
+/** Reads thumbnails a few at a time (the current item first), then keeps copies for the next session. */
+async function loadAll(items: Item[]) {
+  const queue = [...items];
+  const cur = S.items[S.cur];
+  if (queue.includes(cur)) queue.unshift(...queue.splice(queue.indexOf(cur), 1));
+  const worker = async () => {
+    for (let it = queue.shift(); it; it = queue.shift()) {
+      if (it.status === 'loading') await loadItem(it);
+      refresh(it);
+      if (it === S.items[S.cur]) emit('items');
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  emit('items');
+  updateTop();
+  keepFiles(items, () => toast('Not enough storage to remember all files for next time'));
+}
+
+async function addFiles(p: Picked) {
+  const known = new Set(S.items.map((i) => i.key));
+  const fresh: Item[] = [];
+  for (const f of p.files) {
+    const kind = kindOf(f), key = fileKey(f);
+    if (!kind || known.has(key)) continue;
+    known.add(key);
+    fresh.push(makeItem(key, f.name, kind, f));
+  }
+  if (!fresh.length) { toast('No new photos or videos found'); return; }
+  const first = !S.items.length;
+  S.items.push(...fresh);
+  if (first) { S.folderName = p.name; S.importDir = p.dir; S.cur = 0; }
+  else if (!S.folderName.endsWith('+')) S.folderName += ' +';
+  updateTop();
+  buildReel();
+  select(first ? 0 : S.items.length - fresh.length);
+  saveSession();
+  toast(`Added ${fresh.length} ${fresh.length === 1 ? 'file' : 'files'}`);
+  await loadAll(fresh);
+  const bad = fresh.filter((i) => i.status === 'error').length;
+  if (bad) toast(`${bad} ${bad === 1 ? 'file' : 'files'} could not be read`);
+}
+
+/** Rebuilds the previous session: same files, same selection, same tool. */
+async function resume(sess: Session) {
+  const files = await reopen(sess);
+  const items = files.map((x) => {
+    const it = makeItem(x.key, x.name, x.kind, x.file ?? new File([], x.name));
+    if (!x.file) { it.status = 'error'; it.error = 'The file no longer exists. Open it again.'; }
+    return it;
+  });
+  S.items = items;
+  S.folderName = sess.folderName;
+  S.importDir = sess.dirs[0] ?? null;
+  S.scope = sess.scope ?? 'all';
+  S.tab = sess.tab ?? 'looks';
+  S.cur = Math.min(Math.max(0, sess.cur), items.length - 1);
+  updateTop();
+  buildReel();
+  select(S.cur);
+  await loadAll(items);
+  pruneFiles();
+}
+
+function updateTop() {
+  const nv = S.items.filter((i) => i.kind === 'video').length;
+  $('#folderName').textContent = S.folderName;
+  $('#folderMeta').textContent = S.items.length ? `${S.items.length} items · ${nv} videos` : '';
+  $('#empty').hidden = S.items.length > 0;
+  document.body.classList.toggle('has-items', S.items.length > 0);
+}
+
+/* ---------- open menu ---------- */
+const canFolderInput = 'webkitdirectory' in document.createElement('input') && !isPhone();
+async function openFolder() {
+  try {
+    const p = canPickDir ? await pickDirectory() : await pickFiles(true);
+    if (p) await addFiles(p);
+  } catch (e) { toast((e as Error).message); }
+}
+async function openFiles() {
+  const p = await pickFiles();
+  if (p) await addFiles(p);
+}
+function clearAll() {
+  S.items = [];
+  saveSession();
+  pruneFiles();
+  S.cur = 0;
+  S.folderName = '';
+  S.importDir = null;
+  buildReel();
+  updateTop();
+  emit('select');
+}
+
+const menu = $('#openMenu');
+function showMenu(anchor: HTMLElement) {
+  menu.replaceChildren();
+  if (canPickDir || canFolderInput) menu.append(h('button', { onclick: () => { hideMenu(); openFolder(); } }, 'Open folder…'));
+  menu.append(h('button', { onclick: () => { hideMenu(); openFiles(); } }, 'Choose photos and videos…'));
+  if (S.items.length) menu.append(h('button', { class: 'danger', onclick: () => { hideMenu(); clearAll(); } }, 'Close all'));
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = r.bottom + 6 + 'px';
+  menu.style.right = Math.max(16, innerWidth - r.right) + 'px';
+  menu.hidden = false;
+}
+const hideMenu = () => (menu.hidden = true);
+document.addEventListener('pointerdown', (e) => { if (!menu.hidden && !menu.contains(e.target as Node) && !(e.target as Element).closest('#openBtn')) hideMenu(); });
+$('#openBtn').innerHTML = I.open;
+$('#exportBtn').innerHTML = I.export;
+$('#openBtn').onclick = (e) => showMenu(e.currentTarget as HTMLElement);
+$('#exportBtn').onclick = openExport;
+setAddHandler(() => showMenu($('#openBtn')));
+setRemoveHandler((it) => {
+  const i = S.items.indexOf(it);
+  if (i < 0) return;
+  if (S.items.length === 1) { clearAll(); toast(`Removed ${it.name}`); return; }
+  S.items.splice(i, 1);
+  it.thumb?.close();
+  buildReel();
+  select(Math.min(i, S.items.length - 1));
+  updateTop();
+  saveSession();
+  pruneFiles();
+  toast(`Removed ${it.name} from the selection`);
+});
+
+$('#emptyFolder').hidden = !(canPickDir || canFolderInput);
+$('#emptyFolder').onclick = openFolder;
+$('#emptyFiles').onclick = openFiles;
+
+/* ---------- drag & drop ---------- */
+let dragDepth = 0;
+addEventListener('dragenter', (e) => { if (e.dataTransfer?.types.includes('Files')) { dragDepth++; document.body.classList.add('dragging'); } });
+addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove('dragging');
+  if (!e.dataTransfer) return;
+  const p = await fromDrop(e.dataTransfer);
+  if (p) addFiles(p);
+});
+
+/* ---------- boot ---------- */
+on('select', updateTop);
+for (const ev of ['select', 'ui', 'items', 'params'] as const) on(ev, saveSession);
+document.addEventListener('click', (e) => { if ((e.target as Element).closest('.seg, .tabs, .toolbar')) saveSession(); });
+// Write pending edits and the session immediately when the app is hidden or closed.
+addEventListener('pagehide', () => { saveSession(); store.flush(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { saveSession(); store.flush(); } });
+
+await restore();
+updateTop();
+build();
+draw();
+
+const sess = await loadSession();
+if (sess?.items?.length) {
+  const locked = await lockedDirs(sess);
+  if (!locked.length) await resume(sess);
+  else {
+    // Folder access has to be re-granted with a tap; offer to continue where the user left off.
+    const btn = $<HTMLButtonElement>('#resumeBtn');
+    btn.textContent = `Continue where you left off (${sess.items.length} files)`;
+    btn.hidden = false;
+    $('#emptyFolder').classList.remove('primary');
+    btn.onclick = async () => { btn.hidden = true; await unlock(locked); await resume(sess); };
+  }
+}
+
+boot();
+// Fetch the video module once so the service worker has it for offline use.
+if (import.meta.env.PROD) setTimeout(() => import('mediabunny').catch(() => {}), 4000);
