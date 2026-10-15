@@ -1,7 +1,10 @@
-// Persistence: editorial state in IndexedDB, proxy blobs in OPFS.
+// Persistence: projects in the shared Halide registry, workspace settings in
+// this page's IndexedDB, proxy blobs in OPFS.
 // Survives reload and works on Android (no File System Access needed) — the
 // project reopens fully playable/gradeable/exportable from cached proxies;
 // originals are only needed to re-link for full-res export.
+
+import * as P from '../shared/projects.ts';
 
 const DB_NAME = 'halide-edit';
 const STORE = 'kv';
@@ -24,10 +27,14 @@ async function idbGet(key) {
   return new Promise((res, rej) => { const tx = db.transaction(STORE, 'readonly'); const r = tx.objectStore(STORE).get(key); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 }
 
-// ---- projects (multiple editorial states) ----
-// Layout: 'projects' = metadata index [{id,name,created,modified,clips,thumb}];
-// 'project:<id>' = full payload; 'activeId' = currently-open project id.
-function uidP() { return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+// ---- projects ----
+// The registry is shared with Process (src/shared/projects.ts): the launcher
+// lists, opens, renames and deletes projects; this page edits the one in its
+// URL (?p=<id>). Without one it is a fresh session that becomes an "Untitled"
+// project on its first real change.
+let currentId = P.projectFromUrl();
+let restoring = false;
+export function setRestoring(v) { restoring = v; }
 
 function serialize(state) {
   const media = state.media.map((m) => ({
@@ -52,94 +59,30 @@ function clipCount(state) {
   return n;
 }
 
-export async function listProjects() {
-  await migrateLegacy();
-  const idx = (await idbGet('projects')) || [];
-  return idx.slice().sort((a, b) => (b.modified || 0) - (a.modified || 0));
-}
-export async function getActiveId() { await migrateLegacy(); return idbGet('activeId'); }
-export async function setActiveId(id) { return idbSet('activeId', id); }
-
-// migrate the old single-'project' key into the multi-project registry once
-let _migrated = false;
-async function migrateLegacy() {
-  if (_migrated) return; _migrated = true;
-  const idx = await idbGet('projects');
-  if (idx) return; // already on the new layout
-  const old = await idbGet('project');
-  const id = uidP();
-  if (old && old.media) {
-    await idbSet('project:' + id, old);
-    await idbSet('projects', [{ id, name: 'My project', created: Date.now(), modified: Date.now(), clips: (old.tracks?.video || []).reduce((n, t) => n + t.clips.length, 0), thumb: old.media[0]?.thumb || null }]);
-    await idbSet('activeId', id);
-  } else {
-    await idbSet('projects', []);
-  }
-}
-
-export async function createProject(name = 'Untitled') {
-  await migrateLegacy();
-  const id = uidP();
-  const empty = { v: 2, media: [], tracks: { video: [{ id: 'v' + id, clips: [] }], audio: [{ id: 'a' + id, clips: [] }] }, grades: {}, fps: 30, saved: true };
-  await idbSet('project:' + id, empty);
-  const idx = (await idbGet('projects')) || [];
-  idx.push({ id, name, created: Date.now(), modified: Date.now(), clips: 0, thumb: null });
-  await idbSet('projects', idx);
-  await idbSet('activeId', id);
-  return id;
+/** The project this page was opened with, or null (missing → fresh session). */
+export async function loadCurrentProject() {
+  if (!currentId) return null;
+  const data = await P.loadProject(currentId).catch(() => undefined);
+  if (!data) { currentId = null; P.setUrlProject(null); return null; }
+  return data;
 }
 
 export async function saveProject(state) {
-  await migrateLegacy();
-  let id = await idbGet('activeId');
-  const idx = (await idbGet('projects')) || [];
-  if (!id || !idx.find((p) => p.id === id)) { id = await createProject('My project'); }
+  if (restoring) return;   // never write a half-restored project back
+  if (!currentId) {
+    if (!state.media.length && !clipCount(state)) return;   // nothing to keep yet
+    currentId = await P.createProject('edit', 'Untitled');
+    P.setUrlProject(currentId);
+  }
   const payload = serialize(state);
-  try { await idbSet('project:' + id, payload); }
-  catch (e) {
+  const card = { count: clipCount(state), thumb: state.media.find((m) => m.thumb)?.thumb || null };
+  try { await P.saveProject(currentId, payload, card); }
+  catch {
     // a browser that can't clone handles must still save the project
     for (const m of payload.media) m.handle = null;
-    await idbSet('project:' + id, payload);
+    await P.saveProject(currentId, payload, card);
   }
-  const list = (await idbGet('projects')) || [];
-  const meta = list.find((p) => p.id === id);
-  if (meta) { meta.modified = Date.now(); meta.clips = clipCount(state); meta.thumb = state.media[0]?.thumb || null; await idbSet('projects', list); }
 }
-
-// load the active project's payload (kept as loadProject for boot compatibility)
-export async function loadProject() {
-  await migrateLegacy();
-  const id = await idbGet('activeId');
-  if (!id) return null;
-  return idbGet('project:' + id);
-}
-export async function loadProjectById(id) { return idbGet('project:' + id); }
-
-export async function openProject(id) { await setActiveId(id); return loadProjectById(id); }
-
-export async function renameProject(id, name) {
-  const idx = (await idbGet('projects')) || [];
-  const meta = idx.find((p) => p.id === id); if (meta) { meta.name = name; meta.modified = Date.now(); await idbSet('projects', idx); }
-}
-export async function duplicateProject(id) {
-  const payload = await idbGet('project:' + id); if (!payload) return null;
-  const idx = (await idbGet('projects')) || [];
-  const src = idx.find((p) => p.id === id);
-  const nid = uidP();
-  await idbSet('project:' + nid, payload);
-  idx.push({ id: nid, name: ((src?.name || 'Project') + ' copy'), created: Date.now(), modified: Date.now(), clips: src?.clips || 0, thumb: src?.thumb || null });
-  await idbSet('projects', idx);
-  return nid;
-}
-export async function deleteProject(id) {
-  const idx = (await idbGet('projects')) || [];
-  const next = idx.filter((p) => p.id !== id);
-  await idbSet('projects', next);
-  await idbSet('project:' + id, null);
-  const active = await idbGet('activeId');
-  if (active === id) await idbSet('activeId', next[0]?.id || null);
-}
-export async function clearProject() { const id = await idbGet('activeId'); if (id) return idbSet('project:' + id, null); }
 
 // generic kv access for app-level persistence (user LUTs, grade presets, …)
 export const kvGet = (k) => idbGet(k);

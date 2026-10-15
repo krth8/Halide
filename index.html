@@ -42,7 +42,19 @@
     </a>
   </nav>
 
-  <footer class="foot" id="foot"></footer>
+  <section class="recent" id="recent" hidden>
+    <div class="sec-head">
+      <h2>Projects</h2>
+      <div class="filter" id="filter" role="tablist">
+        <button data-f="all" class="on">All</button><button data-f="process">Process</button><button data-f="edit">Edit</button>
+      </div>
+    </div>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <section class="news" id="news"></section>
+
+  <footer class="foot"><span id="foot"></span><button class="install" id="install" hidden>Install app</button></footer>
 </main>
 <script type="module" src="/src/launcher/main.ts"></script>
 </body>

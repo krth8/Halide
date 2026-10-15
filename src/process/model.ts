@@ -104,7 +104,8 @@ export interface Item {
   lum: number;                  // mean luminance of the thumb, for auto-match
   masks: Mask[];
   motion: Motion | null;
-  status: 'loading' | 'ready' | 'error';
+  /** offline: restored from a project, thumbnail shown, the file itself not reconnected yet */
+  status: 'loading' | 'ready' | 'error' | 'offline';
   error?: string;
 }
 

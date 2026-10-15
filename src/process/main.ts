@@ -8,7 +8,7 @@ import { clone, type Item } from './model';
 import { canPickDir, fileKey, fromDrop, kindOf, loadItem, pickDirectory, pickFiles, type Picked } from './media';
 import { S, emit, on, restore, select } from './state';
 import * as store from './store';
-import { keepFiles, loadSession, lockedDirs, pruneFiles, reopen, saveSession, unlock, type Session } from './session';
+import { connect, locate, offlineCount, openProject, pruneThumbs, saveNow, saveSoon } from './project';
 import { $, h, isPhone, toast } from './ui/dom';
 import { buildReel, refresh, setAddHandler, setRemoveHandler } from './ui/reel';
 import { build } from './ui/panel';
@@ -27,7 +27,7 @@ function makeItem(key: string, name: string, kind: Item['kind'], file: File): It
   };
 }
 
-/** Reads thumbnails a few at a time (the current item first), then keeps copies for the next session. */
+/** Reads thumbnails a few at a time (the current item first). */
 async function loadAll(items: Item[]) {
   const queue = [...items];
   const cur = S.items[S.cur];
@@ -42,7 +42,7 @@ async function loadAll(items: Item[]) {
   await Promise.all([worker(), worker(), worker()]);
   emit('items');
   updateTop();
-  keepFiles(items, () => toast('Not enough storage to remember all files for next time'));
+  saveSoon();   // stores the new thumbnails with the project
 }
 
 async function addFiles(p: Picked) {
@@ -62,33 +62,42 @@ async function addFiles(p: Picked) {
   updateTop();
   buildReel();
   select(first ? 0 : S.items.length - fresh.length);
-  saveSession();
+  saveSoon();
   toast(`Added ${fresh.length} ${fresh.length === 1 ? 'file' : 'files'}`);
   await loadAll(fresh);
   const bad = fresh.filter((i) => i.status === 'error').length;
   if (bad) toast(`${bad} ${bad === 1 ? 'file' : 'files'} could not be read`);
 }
 
-/** Rebuilds the previous session: same files, same selection, same tool. */
-async function resume(sess: Session) {
-  const files = await reopen(sess);
-  const items = files.map((x) => {
-    const it = makeItem(x.key, x.name, x.kind, x.file ?? new File([], x.name));
-    if (!x.file) { it.status = 'error'; it.error = 'The file no longer exists. Open it again.'; }
-    return it;
-  });
-  S.items = items;
-  S.folderName = sess.folderName;
-  S.importDir = sess.dirs[0] ?? null;
-  S.scope = sess.scope ?? 'all';
-  S.tab = sess.tab ?? 'looks';
-  S.cur = Math.min(Math.max(0, sess.cur), items.length - 1);
-  updateTop();
-  buildReel();
-  select(S.cur);
-  await loadAll(items);
-  pruneFiles();
+/* ---------- reconnecting a restored project ---------- */
+const relinkBar = $('#relinkBar');
+function syncRelink() {
+  const n = offlineCount();
+  relinkBar.hidden = !n;
+  if (n) $('#relinkText').textContent = `${n} ${n === 1 ? 'file is' : 'files are'} not connected`;
 }
+async function cameOnline(back: Item[]) {
+  syncRelink();
+  if (!back.length) return;
+  back.forEach(refresh);
+  emit('items');
+  saveSoon();
+  await loadAll(back.filter((i) => i.status === 'loading'));
+}
+$('#relinkBtn').onclick = async () => {
+  const back = await connect(true);
+  await cameOnline(back);
+  if (offlineCount()) toast('Some files could not be reopened — use Locate… to point at their folder');
+};
+$('#locateBtn').onclick = async () => {
+  try {
+    const p = canPickDir ? await pickDirectory() : await pickFiles(true);
+    if (!p) return;
+    const back = locate(p);
+    toast(back.length ? `Reconnected ${back.length} ${back.length === 1 ? 'file' : 'files'}` : 'None of the missing files were found there');
+    await cameOnline(back);
+  } catch (e) { toast((e as Error).message); }
+};
 
 function updateTop() {
   const nv = S.items.filter((i) => i.kind === 'video').length;
@@ -112,8 +121,8 @@ async function openFiles() {
 }
 function clearAll() {
   S.items = [];
-  saveSession();
-  pruneFiles();
+  saveSoon();
+  pruneThumbs();
   S.cur = 0;
   S.folderName = '';
   S.importDir = null;
@@ -149,8 +158,8 @@ setRemoveHandler((it) => {
   buildReel();
   select(Math.min(i, S.items.length - 1));
   updateTop();
-  saveSession();
-  pruneFiles();
+  saveSoon();
+  pruneThumbs();
   toast(`Removed ${it.name} from the selection`);
 });
 
@@ -174,29 +183,24 @@ addEventListener('drop', async (e) => {
 
 /* ---------- boot ---------- */
 on('select', updateTop);
-for (const ev of ['select', 'ui', 'items', 'params'] as const) on(ev, saveSession);
-document.addEventListener('click', (e) => { if ((e.target as Element).closest('.seg, .tabs, .toolbar')) saveSession(); });
-// Write pending edits and the session immediately when the app is hidden or closed.
-addEventListener('pagehide', () => { saveSession(); store.flush(); });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { saveSession(); store.flush(); } });
+for (const ev of ['select', 'ui', 'items', 'params'] as const) on(ev, () => saveSoon());
+document.addEventListener('click', (e) => { if ((e.target as Element).closest('.seg, .tabs, .toolbar')) saveSoon(); });
+// Write pending edits and the project immediately when the app is hidden or closed.
+addEventListener('pagehide', () => { saveNow(); store.flush(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { saveNow(); store.flush(); } });
 
 await restore();
 updateTop();
 build();
 draw();
 
-const sess = await loadSession();
-if (sess?.items?.length) {
-  const locked = await lockedDirs(sess);
-  if (!locked.length) await resume(sess);
-  else {
-    // Folder access has to be re-granted with a tap; offer to continue where the user left off.
-    const btn = $<HTMLButtonElement>('#resumeBtn');
-    btn.textContent = `Continue where you left off (${sess.items.length} files)`;
-    btn.hidden = false;
-    $('#emptyFolder').classList.remove('primary');
-    btn.onclick = async () => { btn.hidden = true; await unlock(locked); await resume(sess); };
-  }
+// ?p=<id>: reopen that project — thumbnails first, then every file whose
+// access is still granted; the rest wait for Reconnect / Locate…
+if (await openProject(makeItem)) {
+  updateTop();
+  buildReel();
+  select(S.cur);
+  await cameOnline(await connect(false));
 }
 
 boot();

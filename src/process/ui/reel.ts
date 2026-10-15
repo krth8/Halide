@@ -42,7 +42,7 @@ function flush() {
   raf = 0;
   const t0 = performance.now();
   for (const it of dirty) {
-    if (!visible.has(it) || it.status !== 'ready') continue;
+    if (!visible.has(it) || (it.status !== 'ready' && it.status !== 'offline')) continue;
     const fr = frames.get(it);
     if (fr) renderThumb(it, paramsFor(it), fr.querySelector('canvas')!);
     dirty.delete(it);
@@ -65,6 +65,7 @@ function badges(it: Item, fr: HTMLElement) {
   });
   fr.append(del);
   if (it.status === 'error') fr.append(h('span', { class: 'err', title: it.error || '' }, '!'));
+  fr.classList.toggle('offline', it.status === 'offline');
   if (Object.keys(it.override).length) fr.append(h('span', { class: 'ov', title: 'Own adjustments' }));
   if (it.kind === 'video' && it.trim) fr.append(h('span', { class: 'vid' + (isTrimmed(it) ? ' t' : '') }, '▶ ' + fmtT(it.trim.out - it.trim.in, 0)));
   fr.classList.toggle('loading', it.status === 'loading');

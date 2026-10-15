@@ -6,7 +6,7 @@ import * as store from './store';
 
 export type Tab = 'looks' | 'light' | 'color' | 'curves' | 'fx' | 'crop' | 'trim';
 export interface UserLook { id: string; name: string; params: Params }
-interface Saved { override: Override; trim: Item['trim']; masks?: Item['masks']; motion?: Item['motion'] }
+export interface Saved { override: Override; trim: Item['trim']; masks?: Item['masks']; motion?: Item['motion'] }
 
 export const S = {
   items: [] as Item[],
@@ -78,14 +78,14 @@ export function resetKey(k: Key) {
 
 export function overrideCount(k: Key) { return S.items.filter((it) => k in it.override).length; }
 
+// global params and per-item edits belong to the project: the 'params' event
+// drives its autosave (project.ts)
 export function changed() {
   emit('params');
-  store.setLater('global', () => S.G);
 }
 
 export function remember(it: Item) {
   S.edits[it.key] = { override: it.override, trim: it.trim, masks: it.masks, motion: it.motion };
-  store.setLater('edits', () => S.edits);
 }
 
 export const lutById = (id: string | null) => (id ? S.luts.find((l) => l.id === id) ?? null : null);
@@ -100,13 +100,12 @@ export function select(i: number) {
 }
 
 /* ---------- persistence ---------- */
+/** The workspace-wide library: user looks, LUTs and export settings (projects
+ *  hold the params and edits). */
 export async function restore() {
-  const [g, edits, looks, luts, ex] = await Promise.all([
-    store.get<Params>('global'), store.get<Record<string, Saved>>('edits'), store.get<UserLook[]>('looks'),
-    store.get<CubeLut[]>('luts'), store.get<ExportSettings>('export'),
+  const [looks, luts, ex] = await Promise.all([
+    store.get<UserLook[]>('looks'), store.get<CubeLut[]>('luts'), store.get<ExportSettings>('export'),
   ]);
-  if (g) S.G = { ...clone(DEF), ...g };
-  if (edits) S.edits = edits;
   if (looks) S.looks = looks.map((l) => ({ ...l, params: { ...clone(DEF), ...l.params } }));
   if (luts) S.luts = luts;
   if (ex) S.exportSettings = { ...DEFAULT_EXPORT, ...ex, name: (ex.name ?? DEFAULT_EXPORT.name).replace(/\{navn\}/g, '{name}') };

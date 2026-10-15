@@ -7,7 +7,6 @@ function db(): Promise<IDBDatabase> {
     r.onupgradeneeded = () => {
       const names = r.result.objectStoreNames;
       if (!names.contains('kv')) r.result.createObjectStore('kv');
-      if (!names.contains('files')) r.result.createObjectStore('files');
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -49,19 +48,3 @@ export function setLater(key: string, val: () => unknown, ms = 400) {
 export function flush() {
   for (const [k, fn] of Object.entries(pending)) { clearTimeout(timers[k]); delete pending[k]; set(k, fn()); }
 }
-
-/* ---------- media copies (files picked without folder access) ---------- */
-async function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T> | void): Promise<T | undefined> {
-  const d = await db();
-  return new Promise((res, rej) => {
-    const t = d.transaction('files', mode);
-    const r = fn(t.objectStore('files'));
-    t.oncomplete = () => res(r ? r.result : undefined);
-    t.onerror = () => rej(t.error);
-    t.onabort = () => rej(t.error);
-  });
-}
-export const putFile = (key: string, f: File) => tx('readwrite', (s) => { s.put(f, key); });
-export const getFile = (key: string) => tx<File>('readonly', (s) => s.get(key)).catch(() => undefined);
-export const fileKeys = () => tx<IDBValidKey[]>('readonly', (s) => s.getAllKeys()).then((k) => (k ?? []).map(String)).catch(() => [] as string[]);
-export const deleteFiles = (keys: string[]) => tx('readwrite', (s) => { for (const k of keys) s.delete(k); }).catch(() => {});

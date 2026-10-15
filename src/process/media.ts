@@ -73,8 +73,12 @@ export async function loadItem(it: Item): Promise<void> {
 
 /* ---------- full-resolution decoding (export) ---------- */
 
-/** File handles from folder imports, so a stale File can be re-read from disk. */
+/** Handles of picked/dropped files and folder imports: the project stores
+ *  them (not the files) to reopen media next time, and a stale File can be
+ *  re-read from disk. */
 const handles = new WeakMap<File, FileSystemFileHandle>();
+export const handleOf = (f: File) => handles.get(f);
+export function adoptHandle(f: File, h: FileSystemFileHandle) { handles.set(f, h); }
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function viaImg(blob: Blob): Promise<ImageBitmap> {
@@ -168,6 +172,7 @@ export async function videoStrip(it: Item, n: number, h: number): Promise<ImageB
 /* ---------- picking files ---------- */
 
 export const canPickDir = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+const canPickFiles = typeof window !== 'undefined' && 'showOpenFilePicker' in window;
 
 export interface Picked { files: File[]; dir: FileSystemDirectoryHandle | null; name: string }
 
@@ -208,7 +213,28 @@ export async function pickDirectory(): Promise<Picked | null> {
   }
 }
 
-export function pickFiles(folder = false): Promise<Picked | null> {
+const PICK_TYPES = [{
+  description: 'Photos and videos',
+  accept: {
+    'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.avif', '.heic', '.heif', '.gif', '.bmp', '.tif', '.tiff'],
+    'video/*': ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.3gp'],
+  },
+}];
+
+export async function pickFiles(folder = false): Promise<Picked | null> {
+  // File System Access: handles let the project reopen the files next time
+  if (canPickFiles && !folder) {
+    try {
+      const hs: FileSystemFileHandle[] = await (window as any).showOpenFilePicker({ id: 'halide-in', multiple: true, types: PICK_TYPES, excludeAcceptAllOption: false });
+      const files: File[] = [];
+      for (const h of hs) { const f = await h.getFile(); if (kindOf(f)) { handles.set(f, h); files.push(f); } }
+      files.sort(byName);
+      return files.length ? { files, dir: null, name: files.length === 1 ? files[0].name : `${files.length} files` } : null;
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return null;
+      // fall through to the plain input on any other failure
+    }
+  }
   return new Promise((resolve) => {
     const inp = document.createElement('input');
     inp.type = 'file';
@@ -229,6 +255,23 @@ export function pickFiles(folder = false): Promise<Picked | null> {
 export async function fromDrop(dt: DataTransfer): Promise<Picked | null> {
   const files: File[] = [];
   let name = '';
+  // Chromium hands out real handles for drops (so the project can reopen the
+  // files); they must be requested before the first await of the drop event.
+  const hp = [...dt.items].filter((i) => i.kind === 'file').map((i) => (i as any).getAsFileSystemHandle?.() as Promise<FileSystemHandle | null> | undefined);
+  if (hp.length && hp.every(Boolean)) {
+    const hs = (await Promise.all(hp.map((p) => p!.catch(() => null)))).filter(Boolean) as FileSystemHandle[];
+    if (hs.length) {
+      for (const h of hs) {
+        if (h.kind === 'file') {
+          const f = await (h as FileSystemFileHandle).getFile();
+          if (kindOf(f)) { handles.set(f, h as FileSystemFileHandle); files.push(f); }
+        } else await walk(h as FileSystemDirectoryHandle, files);
+      }
+      if (hs.length === 1 && hs[0].kind === 'directory') name = hs[0].name;
+      files.sort(byName);
+      return files.length ? { files, dir: hs.length === 1 && hs[0].kind === 'directory' ? hs[0] as FileSystemDirectoryHandle : null, name: name || `${files.length} files` } : null;
+    }
+  }
   const entries = [...dt.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean) as FileSystemEntry[];
   const read = (e: FileSystemEntry, depth: number): Promise<void> =>
     new Promise((res) => {

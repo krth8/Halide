@@ -10,7 +10,7 @@ import { initMedia } from './tabs/media.js';
 import { saveProject } from './store.js';
 import { commit as histCommit, undo, redo, resetHistory, canUndo, canRedo } from './history.js';
 import { initLayout, openSheet, closeSheet, relayout } from './layout.js';
-import { initProjects, bootBrowser } from './projects.js';
+import { initProjects, bootProject } from './projects.js';
 import { initSliders } from './slider.js';
 import { initColor, syncUI as colorSync, renderStrip } from './tabs/color.js';
 import { initExport, refresh as exportRefresh } from './tabs/export.js';
@@ -20,25 +20,6 @@ import { APP_VERSION } from './version.js';
 
 const BUILD = 'v' + APP_VERSION;
 
-// ---- PWA install: surfaced as a button on the Projects landing screen — the
-// omnibox hint is easy to miss. beforeinstallprompt can fire before boot()
-// finishes, so capture at module scope; it never fires when already installed.
-let installEv = null;
-// running AS the installed app (any app-like display mode, incl. iOS) — the
-// install button must never show inside the PWA itself
-const isPWA = () => matchMedia('(display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui), (display-mode: window-controls-overlay)').matches
-  || navigator.standalone === true;
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  installEv = e;
-  const b = document.getElementById('pwaInstall');
-  if (b && !isPWA()) b.hidden = false;
-});
-window.addEventListener('appinstalled', () => {
-  const b = document.getElementById('pwaInstall');
-  if (b) b.hidden = true;
-  toast('Halide installed — find it with your apps');
-});
 const renderer = new Renderer();
 let engine;
 
@@ -138,19 +119,10 @@ async function boot() {
   bus.on('timeline:changed', syncEmptyOverlay);
   bus.on('media:changed', syncEmptyOverlay);
 
-  // landing screen: the Projects overview opens over an EMPTY editor — nothing
-  // preloads; a project only loads when the user picks (or creates) one
+  // the project in the URL (picked on the launcher), or an empty editor
   resetHistory();
   syncEmptyOverlay();
-  bootBrowser().catch(() => {});
-  const ib = el('pwaInstall');
-  if (ib && isPWA()) { ib.hidden = true; installEv = null; }
-  if (ib) ib.onclick = async () => {
-    if (!installEv) return;
-    installEv.prompt();
-    try { await installEv.userChoice; } catch {}
-    installEv = null; ib.hidden = true;
-  };
+  bootProject().catch((e) => console.warn('[projects] open failed', e));
   let saveT, histT;
   const autosave = () => { clearTimeout(saveT); saveT = setTimeout(() => saveProject(state).catch(() => {}), 900); };
   bus.on('timeline:changed', autosave);

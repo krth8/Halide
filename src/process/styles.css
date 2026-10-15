@@ -317,3 +317,10 @@ input[type=text] { background: var(--raise); border: 1px solid var(--line); bord
   .empty h1 { font-size: 28px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* restored project: files not reconnected yet */
+.relink { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 8px;
+  padding: 6px 6px 6px 14px; border-radius: 99px; background: var(--panel); font-size: 13px; white-space: nowrap; max-width: calc(100% - 24px);
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); box-shadow: 0 8px 26px rgba(0, 0, 0, .4); }
+.relink span { overflow: hidden; text-overflow: ellipsis; }
+.frame.offline canvas { opacity: .45; filter: grayscale(.6); }

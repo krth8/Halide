@@ -182,6 +182,7 @@ function updateChips() {
   else if (Object.keys(it.override).length) chips.append(h('span', { class: 'chip o' }, 'Own adjustments'));
   if (it.status === 'error') { msg.hidden = false; msg.textContent = it.error || 'Could not read the file'; }
   else if (it.status === 'loading') { msg.hidden = false; msg.textContent = 'Loading…'; }
+  else if (it.status === 'offline') { msg.hidden = false; msg.textContent = 'Not connected — Reconnect to open the file'; }
 }
 
 /* ---------- gestures: hold for original, swipe to navigate, pipette ---------- */
