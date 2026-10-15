@@ -1,4 +1,4 @@
-import { Renderer } from '../gl/renderer';
+import { Renderer } from '../gpu/renderer';
 import { isTrimmed, type Item, type Params } from '../model';
 import { S, curItem, emit, lutById, on, outDims, paramsFor, select } from '../state';
 import { $, fmtT, h } from './dom';

@@ -1,4 +1,4 @@
-import { Renderer } from '../gl/renderer';
+import { Renderer } from '../gpu/renderer';
 import { loadPreview } from '../media';
 import { S, changed, curItem, curMask, emit, lutById, on, outDims, paramsFor, remember, select, setV } from '../state';
 import { corrAt } from '../stab';

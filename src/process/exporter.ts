@@ -1,5 +1,5 @@
 import type { BufferTarget, VideoCodec } from 'mediabunny';
-import { Renderer } from './gl/renderer';
+import { Renderer } from './gpu/renderer';
 import type { CubeLut } from './cube';
 import type { Item, Params } from './model';
 import { decodeFull } from './media';
@@ -128,7 +128,7 @@ export async function runExport(job: ExportJob): Promise<ExportResult> {
     }
     job.onProgress(i, 1);
   }
-  (R.gl.getExtension('WEBGL_lose_context'))?.loseContext();
+  R.destroy();
   return res;
 }
 
@@ -148,7 +148,7 @@ async function exportImage(R: Renderer, it: Item, job: ExportJob) {
   R.setSource(bm, bm.width, bm.height);
   R.render(P, w, h, { lut: job.lut(P.lut.id), seed: it.id, masks: it.masks });
   bm.close();
-  if (R.gl.drawingBufferWidth < w) throw new Error('The image is too large for this device. Choose a smaller export size.');
+  if (R.canvas.width < w) throw new Error('The image is too large for this device. Choose a smaller export size.');
   const blob = await new Promise<Blob | null>((r) => R.canvas.toBlob(r, MIME[s.format], s.quality / 100));
   if (!blob) throw new Error('Could not encode the image');
   await job.dest.write(outName(it, s), blob);

@@ -13,6 +13,7 @@ import { $, h, isPhone, toast } from './ui/dom';
 import { buildReel, refresh, setAddHandler, setRemoveHandler } from './ui/reel';
 import { build } from './ui/panel';
 import { draw } from './ui/stage';
+import { gpuOk } from './gpu/renderer';
 import { openExport } from './ui/exportSheet';
 
 let nextId = 1;
@@ -188,6 +189,13 @@ document.addEventListener('click', (e) => { if ((e.target as Element).closest('.
 // Write pending edits and the project immediately when the app is hidden or closed.
 addEventListener('pagehide', () => { saveNow(); store.flush(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { saveNow(); store.flush(); } });
+
+if (!gpuOk) {
+  $('#empty').hidden = true;
+  const m = $('#stageMsg');
+  m.hidden = false;
+  m.textContent = 'Halide needs WebGPU — use a current Chrome or Edge (113+) or Safari (26+).';
+}
 
 await restore();
 updateTop();
