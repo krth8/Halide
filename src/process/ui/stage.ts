@@ -71,7 +71,8 @@ async function ensureImage(it: Item) {
     srcFor = it;
     srcIsPreview = true;
     draw();
-  } catch {
+  } catch (e) {
+    console.warn('[process] preview decode failed', it.name, e);
     it.status = 'error';
     it.error = 'Could not read the image';
     emit('items');
@@ -109,21 +110,28 @@ function dropVideo() {
   videoFor = null;
 }
 
+let videoFile: File | null = null;
 function setupVideo(it: Item) {
-  if (videoFor === it) return;
+  if (videoFor === it && videoFile === it.file) return;
+  // same clip, new File (the session's stored copy was swapped in): keep the
+  // position and play state
+  const resume = videoFor === it && video ? { t: video.currentTime, play: !video.paused } : null;
   dropVideo();
   const v = document.createElement('video');
   v.muted = true; v.playsInline = true; v.preload = 'auto'; v.loop = true;
   v.setAttribute('playsinline', '');
   v.src = URL.createObjectURL(it.file);
-  video = v; videoFor = it;
+  video = v; videoFor = it; videoFile = it.file;
   syncButtons();
-  v.addEventListener('loadeddata', () => { v.currentTime = it.trim?.in ?? 0; });
+  v.addEventListener('loadeddata', () => {
+    v.currentTime = resume ? resume.t : it.trim?.in ?? 0;
+    if (resume?.play) v.play().catch(() => {});
+  });
   v.addEventListener('seeked', () => { draw(); updateTc(); });
   v.addEventListener('play', () => { syncButtons(); tick(); });
   v.addEventListener('pause', syncButtons);
   v.addEventListener('volumechange', syncButtons);
-  v.addEventListener('error', () => { it.status = 'error'; it.error = 'This video cannot be played in this browser'; emit('items'); });
+  v.addEventListener('error', () => { if (v !== video) return; it.status = 'error'; it.error = 'This video cannot be played in this browser'; emit('items'); });
 }
 
 function tick() {

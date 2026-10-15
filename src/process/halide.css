@@ -38,11 +38,11 @@ body { background: var(--hl-backdrop) fixed, var(--hl-base); }
 input[type=text], input[type=number], select { box-shadow: var(--hl-inset); }
 
 /* primary actions carry the Halide gradient */
-.btn.primary, .ib.primary { background: var(--hl-accent-grad); border-color: transparent; color: #fff; }
+.btn.primary, .ib.primary { background: var(--hl-accent-grad); border-color: transparent; color: var(--hl-accent-ink); }
 
 @media (max-width: 860px) {
   .toolbar, .app.sheet-open .toolbar {
-    background: rgba(16, 14, 24, .62);
+    background: rgba(24, 22, 31, .88);
     -webkit-backdrop-filter: var(--hl-blur); backdrop-filter: var(--hl-blur);
   }
   .panel { border-radius: 18px 18px 0 0; background: var(--hl-sheen), var(--hl-glass-strong); }

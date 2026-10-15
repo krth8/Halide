@@ -33,7 +33,7 @@ body { background: var(--hl-backdrop) fixed, var(--hl-base); font-family: var(--
 
 /* frosted surfaces */
 header {
-  background: rgba(16, 14, 24, .42);
+  background: rgba(24, 22, 31, .72);
   -webkit-backdrop-filter: var(--hl-blur); backdrop-filter: var(--hl-blur);
   border-bottom-color: var(--hl-stroke);
 }
@@ -43,7 +43,7 @@ header {
   box-shadow: var(--hl-shadow-sm);
 }
 .timeline {
-  background: var(--hl-sheen), rgba(16, 14, 24, .5);
+  background: var(--hl-sheen), rgba(24, 22, 31, .78);
   -webkit-backdrop-filter: var(--hl-blur); backdrop-filter: var(--hl-blur);
 }
 :root[data-layout="narrow"] .side,
@@ -64,7 +64,7 @@ input[type=checkbox] { box-shadow: var(--hl-inset); background: var(--hl-raise);
 .pv-canvas { background: var(--hl-picture); }
 
 /* primary actions carry the Halide gradient */
-button.accent, #projNew, .btn-tp.play.playing { background: var(--hl-accent-grad); color: #fff; }
+button.accent, #projNew, .btn-tp.play.playing { background: var(--hl-accent-grad); color: var(--hl-accent-ink); }
 button.accent:hover, #projNew:hover { filter: brightness(1.08); }
 
 /* header: Halide home mark in place of the old brand */

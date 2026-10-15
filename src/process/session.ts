@@ -1,6 +1,6 @@
 import type { Item, Kind } from './model';
 import { openInDir, originOf } from './media';
-import { S, type Tab } from './state';
+import { S, emit, type Tab } from './state';
 import * as store from './store';
 
 /** What is needed to rebuild the media list after a restart, app update or force close. Files from a
@@ -35,6 +35,12 @@ export async function keepFiles(items: Item[], onQuota: () => void) {
     if (copied.has(it.key) || originOf(it.file) || it.status === 'error') continue;
     try {
       await store.putFile(it.key, it.file);
+      // Chrome can leave the picked File unreadable once IndexedDB holds a
+      // copy of it (every later read fails: InvalidStateError from
+      // createImageBitmap, NotReadableError from arrayBuffer) — so photos not
+      // yet opened showed "Could not read the image". Read the stored copy.
+      const copy = await store.getFile(it.key);
+      if (copy) { it.file = copy; emit('items'); }   // an open video re-sources from the copy
       copied.add(it.key);
     } catch {
       if (!quotaWarned) { quotaWarned = true; onQuota(); }

@@ -29,20 +29,20 @@
   --hl-code: ui-monospace, "JetBrains Mono", Consolas, monospace;
 
   /* backdrop: what the glass sits on */
-  --hl-base: #0a0910;
+  --hl-base: #0d0c11;
   --hl-backdrop:
-    radial-gradient(60vmax 50vmax at 8% -10%, rgba(132, 92, 255, .34), transparent 60%),
-    radial-gradient(55vmax 45vmax at 105% 110%, rgba(255, 92, 170, .26), transparent 60%),
-    radial-gradient(45vmax 40vmax at 72% 18%, rgba(70, 170, 220, .1), transparent 60%),
-    radial-gradient(40vmax 35vmax at 20% 95%, rgba(150, 90, 255, .12), transparent 60%),
-    linear-gradient(180deg, #0d0b14, #08070c);
+    radial-gradient(60vmax 50vmax at 8% -10%, rgba(160, 145, 210, .16), transparent 60%),
+    radial-gradient(55vmax 45vmax at 105% 110%, rgba(215, 160, 195, .11), transparent 60%),
+    radial-gradient(45vmax 40vmax at 72% 18%, rgba(140, 185, 205, .05), transparent 60%),
+    radial-gradient(40vmax 35vmax at 20% 95%, rgba(165, 150, 215, .06), transparent 60%),
+    linear-gradient(180deg, #121118, #0c0b10);
 
   /* the picture: neutral, never tinted */
   --hl-picture: #070708;
 
   /* glass surfaces, lightest last */
-  --hl-glass: rgba(24, 21, 34, .5);           /* panels, bars */
-  --hl-glass-strong: rgba(30, 27, 42, .78);   /* menus, sheets, popovers */
+  --hl-glass: rgba(29, 27, 37, .8);           /* panels, bars */
+  --hl-glass-strong: rgba(33, 31, 42, .92);   /* menus, sheets, popovers */
   --hl-well: rgba(255, 255, 255, .045);       /* inputs, tracks, segmented wells */
   --hl-raise: rgba(255, 255, 255, .075);      /* cards and buttons on glass */
   --hl-hover: rgba(255, 255, 255, .12);
@@ -64,21 +64,22 @@
   --hl-muted: #938da3;
   --hl-faint: #676177;
 
-  /* accents: lavender for action, pink for selection/highlight */
-  --hl-accent: #b49cff;
-  --hl-accent-hover: #c7b5ff;
-  --hl-accent-light: #ddd2ff;
-  --hl-accent-ink: #160e2c;
-  --hl-accent-bg: rgba(180, 156, 255, .15);
-  --hl-accent-glow: rgba(180, 156, 255, .38);
-  --hl-accent-grad: linear-gradient(100deg, #9f86ff, #d68cff 55%, #ff7cbf);
-  --hl-pink: #ff7cbf;
-  --hl-pink-bg: rgba(255, 124, 191, .15);
+  /* pastel accents: lavender for action, rose for selection/highlight;
+     dark ink on top of them */
+  --hl-accent: #c5b8f6;
+  --hl-accent-hover: #d4caf9;
+  --hl-accent-light: #e6e0fb;
+  --hl-accent-ink: #1d1830;
+  --hl-accent-bg: rgba(197, 184, 246, .14);
+  --hl-accent-glow: rgba(197, 184, 246, .32);
+  --hl-accent-grad: linear-gradient(100deg, #c2b5f4, #dcbdf0 55%, #f2bfd8);
+  --hl-pink: #f0b4d0;
+  --hl-pink-bg: rgba(240, 180, 208, .14);
 
-  --hl-ok: #6fe0a6;
-  --hl-warn: #ffd36b;
-  --hl-danger: #ff7d8c;
-  --hl-info: #86d6ea;
+  --hl-ok: #a6e3c4;
+  --hl-warn: #f2dc9b;
+  --hl-danger: #f2a7b0;
+  --hl-info: #aedcea;
 
   --hl-r-sm: 8px;
   --hl-r-md: 12px;

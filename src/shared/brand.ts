@@ -9,9 +9,9 @@ export function halideMark(): string {
   const a = uid(), b = uid(), c = uid();
   return `<svg viewBox="0 0 32 32" aria-hidden="true">
   <defs>
-    <linearGradient id="${a}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#efe8ff"/><stop offset="1" stop-color="#c9b6ff"/></linearGradient>
-    <linearGradient id="${b}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a98cff"/><stop offset="1" stop-color="#7b5cf0"/></linearGradient>
-    <linearGradient id="${c}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8fcb"/><stop offset="1" stop-color="#d9559d"/></linearGradient>
+    <linearGradient id="${a}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4f0ff"/><stop offset="1" stop-color="#d8cdf9"/></linearGradient>
+    <linearGradient id="${b}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#bfb1f2"/><stop offset="1" stop-color="#9686d8"/></linearGradient>
+    <linearGradient id="${c}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4bcd6"/><stop offset="1" stop-color="#d48fb2"/></linearGradient>
   </defs>
   <path d="M16 2.5 28.5 9.6 16 16.8 3.5 9.6z" fill="url(#${a})"/>
   <path d="M3.5 9.6 16 16.8v12.7L3.5 22.3z" fill="url(#${b})"/>

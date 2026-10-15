@@ -12,7 +12,7 @@ body {
 }
 
 .brandline { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
-.brandline .mark { width: 64px; height: 64px; filter: drop-shadow(0 10px 30px rgba(150, 110, 255, .45)); }
+.brandline .mark { width: 64px; height: 64px; filter: drop-shadow(0 10px 30px rgba(170, 150, 230, .32)); }
 .brandline .mark svg { width: 100%; height: 100%; }
 .brandline h1 {
   margin: 4px 0 0; font-weight: 800; font-size: clamp(34px, 6vw, 52px); letter-spacing: .32em; text-indent: .32em;
@@ -41,11 +41,11 @@ body {
   transition: box-shadow .2s, transform .2s;
 }
 .glyph svg { width: 30px; height: 30px; }
-.process .glyph { background: linear-gradient(145deg, #a48aff, #6b4fe0); }
-.edit .glyph { background: linear-gradient(145deg, #ff8cc8, #d94f98); }
+.process .glyph { background: linear-gradient(145deg, #cbbff7, #9d8de0); color: #241d3d; }
+.edit .glyph { background: linear-gradient(145deg, #f6c4dc, #d996b8); color: #3a2030; }
 .mode:hover .glyph { transform: translateY(-2px); }
-.process:hover .glyph { box-shadow: 0 14px 38px rgba(130, 96, 255, .55), inset 0 1px 0 rgba(255, 255, 255, .35); }
-.edit:hover .glyph { box-shadow: 0 14px 38px rgba(255, 96, 170, .5), inset 0 1px 0 rgba(255, 255, 255, .35); }
+.process:hover .glyph { box-shadow: 0 14px 38px rgba(170, 150, 235, .4), inset 0 1px 0 rgba(255, 255, 255, .45); }
+.edit:hover .glyph { box-shadow: 0 14px 38px rgba(225, 150, 190, .38), inset 0 1px 0 rgba(255, 255, 255, .45); }
 .txt { display: flex; flex-direction: column; gap: 7px; }
 .txt b { font-size: 26px; font-weight: 700; letter-spacing: .01em; }
 .txt small { font-size: 14px; color: var(--hl-text-2); max-width: 34ch; }
