@@ -1,0 +1,50 @@
+/* Halide look for Process. The workspace's own tokens point at the shared
+   theme (src/shared/theme.css) and its surfaces frost over the Halide
+   backdrop. Layout is untouched — only colour, depth and type change here. */
+:root {
+  --bg: transparent;                  /* the backdrop shows through */
+  --stage: var(--hl-picture);         /* the image sits on neutral black */
+  --panel: var(--hl-glass);
+  --raise: var(--hl-raise);
+  --card: rgba(255, 255, 255, .04);
+  --line: var(--hl-stroke);
+  --fg: var(--hl-text);
+  --muted: var(--hl-muted);
+  --faint: var(--hl-faint);
+  --accent: var(--hl-accent);
+  --accent-ink: var(--hl-accent-ink);
+  --ovr: var(--hl-pink);              /* "this item only" overrides */
+  --warn: var(--hl-danger);
+  --ui: var(--hl-font);
+  --mono: var(--hl-num);
+}
+
+body { background: var(--hl-backdrop) fixed, var(--hl-base); }
+
+/* frosted surfaces */
+.panel, .sheet {
+  background: var(--hl-sheen), var(--hl-glass);
+  -webkit-backdrop-filter: var(--hl-blur); backdrop-filter: var(--hl-blur);
+  box-shadow: var(--hl-shadow);
+}
+.panel { border-radius: var(--hl-r-lg); }
+.sheet { background: var(--hl-sheen), var(--hl-glass-strong); }
+.stage { border-radius: var(--hl-r-lg); box-shadow: 0 18px 50px rgba(0, 0, 0, .45), var(--hl-hi); }
+
+/* shading instead of outlines: wells sink, raised controls catch light */
+.seg { background: var(--hl-well); box-shadow: var(--hl-inset); }
+.btn, .ib, .frame, .seg button.on { box-shadow: var(--hl-hi); }
+.btn:hover, .ib:hover { background: var(--hl-hover); }
+input[type=text], input[type=number], select { box-shadow: var(--hl-inset); }
+
+/* primary actions carry the Halide gradient */
+.btn.primary, .ib.primary { background: var(--hl-accent-grad); border-color: transparent; color: #fff; }
+
+@media (max-width: 860px) {
+  .toolbar, .app.sheet-open .toolbar {
+    background: rgba(16, 14, 24, .62);
+    -webkit-backdrop-filter: var(--hl-blur); backdrop-filter: var(--hl-blur);
+  }
+  .panel { border-radius: 18px 18px 0 0; background: var(--hl-sheen), var(--hl-glass-strong); }
+  .hl-home b { display: none; }
+}

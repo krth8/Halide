@@ -21,7 +21,7 @@ export interface ExportSettings {
 }
 export type VideoQuality = 'medium' | 'high' | 'very_high' | 'custom';
 export const DEFAULT_EXPORT: ExportSettings = {
-  format: 'jpeg', quality: 92, size: 0, codec: 'avc', name: '{name}_filmlab',
+  format: 'jpeg', quality: 92, size: 0, codec: 'avc', name: '{name}_halide',
   vRes: 0, vQuality: 'high', vBitrate: 20, fps: 0, audio: true,
 };
 

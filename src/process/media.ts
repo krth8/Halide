@@ -198,7 +198,7 @@ export async function openInDir(root: FileSystemDirectoryHandle, path: string): 
 
 export async function pickDirectory(): Promise<Picked | null> {
   try {
-    const dir: FileSystemDirectoryHandle = await (window as any).showDirectoryPicker({ id: 'filmlab-in', mode: 'read' });
+    const dir: FileSystemDirectoryHandle = await (window as any).showDirectoryPicker({ id: 'halide-in', mode: 'read' });
     const files: File[] = [];
     await walk(dir, files);
     return { files: files.sort(byName), dir, name: dir.name };

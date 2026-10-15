@@ -4,9 +4,46 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Halide</title>
+<meta name="description" content="Develop photos and video, and cut them into films — entirely in your browser.">
+<link rel="icon" href="%BASE_URL%icons/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="%BASE_URL%manifest.webmanifest">
+<meta name="theme-color" content="#0a0910">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Halide">
+<link rel="apple-touch-icon" href="%BASE_URL%icons/apple-touch-icon.png">
 </head>
 <body>
-<a href="process/">Process</a> <a href="edit/">Edit</a>
+<main class="launch">
+  <header class="brandline">
+    <span class="mark" id="mark"></span>
+    <h1>HALIDE</h1>
+    <p>Develop and edit — on your device, nothing uploaded.</p>
+  </header>
+
+  <nav class="modes hl-glass" aria-label="Workspaces">
+    <a class="mode process" href="process/">
+      <span class="glyph" id="gProcess"></span>
+      <span class="txt">
+        <b>Process</b>
+        <small>Develop photos and video: film looks, light, colour, grain and masks — a whole series at once.</small>
+      </span>
+      <span class="go" aria-hidden="true">→</span>
+    </a>
+    <span class="divider" aria-hidden="true"></span>
+    <a class="mode edit" href="edit/">
+      <span class="glyph" id="gEdit"></span>
+      <span class="txt">
+        <b>Edit</b>
+        <small>Cut video on a multi-track timeline: grading, titles, effects and full-quality export.</small>
+      </span>
+      <span class="go" aria-hidden="true">→</span>
+    </a>
+  </nav>
+
+  <footer class="foot" id="foot"></footer>
+</main>
 <script type="module" src="/src/launcher/main.ts"></script>
 </body>
 </html>

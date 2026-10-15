@@ -2,6 +2,7 @@ import '../shared/theme.css';
 import './styles.css';
 import './halide.css';
 import { boot } from '../shared/boot';
+import { homeLink } from '../shared/brand';
 import { I } from './ui/icons';
 import { clone, type Item } from './model';
 import { canPickDir, fileKey, fromDrop, kindOf, loadItem, pickDirectory, pickFiles, type Picked } from './media';
@@ -199,5 +200,6 @@ if (sess?.items?.length) {
 }
 
 boot();
+document.getElementById('hlHome')?.replaceWith(homeLink('Process'));
 // Fetch the video module once so the service worker has it for offline use.
 if (import.meta.env.PROD) setTimeout(() => import('mediabunny').catch(() => {}), 4000);

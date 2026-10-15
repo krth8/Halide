@@ -1,0 +1,70 @@
+/* Launcher: the Halide wordmark over one glass panel split into the two
+   workspaces. Side by side on wide screens, stacked on narrow ones. */
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  color: var(--hl-text); font: 15px/1.45 var(--hl-font);
+  -webkit-tap-highlight-color: transparent; overflow: auto;
+}
+.launch {
+  min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 38px;
+  padding: calc(env(safe-area-inset-top, 0px) + 32px) 20px calc(env(safe-area-inset-bottom, 0px) + 24px);
+}
+
+.brandline { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.brandline .mark { width: 64px; height: 64px; filter: drop-shadow(0 10px 30px rgba(150, 110, 255, .45)); }
+.brandline .mark svg { width: 100%; height: 100%; }
+.brandline h1 {
+  margin: 4px 0 0; font-weight: 800; font-size: clamp(34px, 6vw, 52px); letter-spacing: .32em; text-indent: .32em;
+  font-stretch: 112%;
+  background: linear-gradient(180deg, #ffffff, #cfc5ea); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.brandline p { margin: 0; color: var(--hl-muted); font-size: 14px; }
+
+.modes {
+  width: min(880px, 100%); display: grid; grid-template-columns: 1fr auto 1fr; align-items: stretch;
+  border-radius: 26px; padding: 10px;
+}
+.divider {
+  width: 1px; margin: 22px 4px; box-shadow: 1px 0 0 rgba(0, 0, 0, .35);
+  background: linear-gradient(180deg, transparent, rgba(255, 255, 255, .18) 30%, rgba(255, 255, 255, .18) 70%, transparent);
+}
+.mode {
+  position: relative; display: flex; flex-direction: column; gap: 18px; padding: 30px 28px 26px; border-radius: 18px;
+  color: inherit; text-decoration: none; transition: background .2s, transform .2s;
+}
+.mode:hover, .mode:focus-visible { background: rgba(255, 255, 255, .055); outline: none; }
+.mode:active { transform: scale(.985); }
+.glyph {
+  width: 58px; height: 58px; border-radius: 17px; display: grid; place-items: center; color: #fff;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .35);
+  transition: box-shadow .2s, transform .2s;
+}
+.glyph svg { width: 30px; height: 30px; }
+.process .glyph { background: linear-gradient(145deg, #a48aff, #6b4fe0); }
+.edit .glyph { background: linear-gradient(145deg, #ff8cc8, #d94f98); }
+.mode:hover .glyph { transform: translateY(-2px); }
+.process:hover .glyph { box-shadow: 0 14px 38px rgba(130, 96, 255, .55), inset 0 1px 0 rgba(255, 255, 255, .35); }
+.edit:hover .glyph { box-shadow: 0 14px 38px rgba(255, 96, 170, .5), inset 0 1px 0 rgba(255, 255, 255, .35); }
+.txt { display: flex; flex-direction: column; gap: 7px; }
+.txt b { font-size: 26px; font-weight: 700; letter-spacing: .01em; }
+.txt small { font-size: 14px; color: var(--hl-text-2); max-width: 34ch; }
+.go {
+  position: absolute; top: 30px; right: 26px; font-size: 20px; color: var(--hl-muted);
+  transition: transform .2s, color .2s;
+}
+.mode:hover .go { transform: translateX(4px); color: var(--hl-text); }
+
+.foot { color: var(--hl-faint); font: 12px var(--hl-num); }
+
+@media (max-width: 640px) {
+  .launch { justify-content: flex-start; gap: 28px; padding-top: calc(env(safe-area-inset-top, 0px) + 48px); }
+  .modes { grid-template-columns: 1fr; padding: 6px; }
+  .divider { width: auto; height: 1px; margin: 0 22px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .18) 30%, rgba(255, 255, 255, .18) 70%, transparent); }
+  .mode { flex-direction: row; align-items: center; gap: 16px; padding: 20px 18px; }
+  .glyph { width: 50px; height: 50px; border-radius: 15px; flex: none; }
+  .txt b { font-size: 21px; }
+  .txt small { font-size: 13px; }
+  .go { position: static; margin-left: auto; }
+}

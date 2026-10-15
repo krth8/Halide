@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 
 const root = (p: string) => fileURLToPath(new URL(p, import.meta.url));
+const pkg = JSON.parse(readFileSync(root('./package.json'), 'utf8')) as { version: string };
 
 // Cross-origin isolation (SharedArrayBuffer for the multi-thread ffmpeg core).
 // The dev/preview servers send the headers; on GitHub Pages public/sw.js adds
@@ -12,6 +14,7 @@ const isolation = {
 };
 
 export default defineConfig({
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   // Pages serves the repo under /Halide/ — CI passes HALIDE_BASE; local is '/'.
   base: process.env.HALIDE_BASE || '/',
   build: {

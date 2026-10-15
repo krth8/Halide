@@ -59,7 +59,7 @@ function form() {
   const dest = canPickDir
     ? h('div', { class: 'dest' }, destPath, h('button', { class: 'btn small', onclick: async () => {
         try {
-          outDir = await (window as any).showDirectoryPicker({ id: 'filmlab-out', mode: 'readwrite', startIn: S.importDir ?? 'pictures' });
+          outDir = await (window as any).showDirectoryPicker({ id: 'halide-out', mode: 'readwrite', startIn: S.importDir ?? 'pictures' });
           destPath.textContent = outDir!.name;
           destPath.classList.remove('warn');
         } catch { /* cancelled */ }

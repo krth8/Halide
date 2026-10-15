@@ -1,0 +1,108 @@
+/* Halide theme — shared by the launcher, Process and Edit.
+   Each workspace keeps its own stylesheet and layout; its halide.css maps the
+   workspace's own variables onto these tokens and frosts its surfaces.
+
+   Look: dark glass. Surfaces are translucent and blurred over a deep backdrop
+   with soft colour fields, with a hairline top highlight and soft shadow for
+   depth. The picture itself (preview canvases, the stage) stays on neutral
+   near-black — colour judgement must not be tinted by the UI. */
+
+@font-face {
+  font-family: "Archivo";
+  src: url("./fonts/archivo-latin.woff2") format("woff2");
+  font-weight: 400 800;
+  font-stretch: 62% 125%;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Roboto";
+  src: url("./fonts/roboto-latin.woff2") format("woff2");
+  font-weight: 400 500;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+
+  --hl-font: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --hl-num: "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --hl-code: ui-monospace, "JetBrains Mono", Consolas, monospace;
+
+  /* backdrop: what the glass sits on */
+  --hl-base: #0a0910;
+  --hl-backdrop:
+    radial-gradient(60vmax 50vmax at 8% -10%, rgba(132, 92, 255, .34), transparent 60%),
+    radial-gradient(55vmax 45vmax at 105% 110%, rgba(255, 92, 170, .26), transparent 60%),
+    radial-gradient(45vmax 40vmax at 72% 18%, rgba(70, 170, 220, .1), transparent 60%),
+    radial-gradient(40vmax 35vmax at 20% 95%, rgba(150, 90, 255, .12), transparent 60%),
+    linear-gradient(180deg, #0d0b14, #08070c);
+
+  /* the picture: neutral, never tinted */
+  --hl-picture: #070708;
+
+  /* glass surfaces, lightest last */
+  --hl-glass: rgba(24, 21, 34, .5);           /* panels, bars */
+  --hl-glass-strong: rgba(30, 27, 42, .78);   /* menus, sheets, popovers */
+  --hl-well: rgba(255, 255, 255, .045);       /* inputs, tracks, segmented wells */
+  --hl-raise: rgba(255, 255, 255, .075);      /* cards and buttons on glass */
+  --hl-hover: rgba(255, 255, 255, .12);
+  --hl-sunk: rgba(0, 0, 0, .28);
+
+  /* no outlines: surfaces separate by shade, a top highlight and shadow */
+  --hl-stroke: transparent;
+  --hl-stroke-hi: transparent;
+  --hl-hi: inset 0 1px 0 rgba(255, 255, 255, .08);             /* lit top edge */
+  --hl-inset: inset 0 1px 2px rgba(0, 0, 0, .28), inset 0 -1px 0 rgba(255, 255, 255, .03);   /* wells */
+  --hl-sheen: linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, 0) 40%);
+  --hl-shadow: 0 18px 50px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(255, 255, 255, .07);
+  --hl-shadow-sm: 0 6px 18px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .06);
+  --hl-blur: blur(22px) saturate(150%);
+
+  /* text */
+  --hl-text: #f4f2f9;
+  --hl-text-2: #cbc6d8;
+  --hl-muted: #938da3;
+  --hl-faint: #676177;
+
+  /* accents: lavender for action, pink for selection/highlight */
+  --hl-accent: #b49cff;
+  --hl-accent-hover: #c7b5ff;
+  --hl-accent-light: #ddd2ff;
+  --hl-accent-ink: #160e2c;
+  --hl-accent-bg: rgba(180, 156, 255, .15);
+  --hl-accent-glow: rgba(180, 156, 255, .38);
+  --hl-accent-grad: linear-gradient(100deg, #9f86ff, #d68cff 55%, #ff7cbf);
+  --hl-pink: #ff7cbf;
+  --hl-pink-bg: rgba(255, 124, 191, .15);
+
+  --hl-ok: #6fe0a6;
+  --hl-warn: #ffd36b;
+  --hl-danger: #ff7d8c;
+  --hl-info: #86d6ea;
+
+  --hl-r-sm: 8px;
+  --hl-r-md: 12px;
+  --hl-r-lg: 18px;
+}
+
+html { background: var(--hl-base); }
+body { background: var(--hl-backdrop) fixed, var(--hl-base); }
+
+/* a frosted surface — the workspaces apply the same recipe to their panels */
+.hl-glass {
+  background: var(--hl-sheen), var(--hl-glass);
+  -webkit-backdrop-filter: var(--hl-blur);
+  backdrop-filter: var(--hl-blur);
+  box-shadow: var(--hl-shadow);
+}
+
+/* Halide home mark — the way back to the launcher from either workspace */
+.hl-home {
+  display: inline-flex; align-items: center; gap: 9px; text-decoration: none; color: var(--hl-text);
+  font: 700 14px/1 var(--hl-font); letter-spacing: .02em; white-space: nowrap;
+  padding: 5px 10px 5px 5px; border-radius: 999px; transition: background .15s;
+}
+.hl-home:hover { background: var(--hl-raise); }
+.hl-home svg { width: 26px; height: 26px; flex: none; }
+.hl-home b { font-weight: 800; letter-spacing: .14em; font-size: 12.5px; }
+.hl-home span { color: var(--hl-muted); font-weight: 600; }

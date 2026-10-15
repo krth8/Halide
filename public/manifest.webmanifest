@@ -1,0 +1,23 @@
+{
+  "name": "Halide",
+  "short_name": "Halide",
+  "description": "Develop photos and video, and cut them into films — entirely in your browser.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#0a0910",
+  "theme_color": "#0a0910",
+  "categories": ["photo", "video", "productivity"],
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Process", "short_name": "Process", "description": "Develop photos and video", "url": "process/" },
+    { "name": "Edit", "short_name": "Edit", "description": "Cut video on a timeline", "url": "edit/" }
+  ]
+}

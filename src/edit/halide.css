@@ -1,0 +1,74 @@
+/* Halide look for Edit. The workspace's own tokens point at the shared theme
+   (src/shared/theme.css) and its surfaces frost over the Halide backdrop.
+   Layout is untouched — only colour, depth and type change here. */
+:root {
+  --bg-dark: transparent;                 /* body: the backdrop shows through */
+  --bg: var(--hl-sunk);
+  --bg-solid: var(--hl-glass-strong);     /* popovers, narrow drawers */
+  --bg-secondary: var(--hl-well);
+  --bg-panel: var(--hl-glass);
+  --bg-elevated: var(--hl-raise);
+  --bg-hover: var(--hl-hover);
+  --border: var(--hl-stroke);
+  --border-medium: var(--hl-stroke-hi);
+  --text: var(--hl-text);
+  --text-muted: var(--hl-muted);
+  --text-secondary: var(--hl-text-2);
+  --accent: var(--hl-accent);
+  --accent-hover: var(--hl-accent-hover);
+  --accent-light: var(--hl-accent-light);
+  --accent-glow: var(--hl-accent-glow);
+  --accent-bg: var(--hl-accent-bg);
+  --on-accent: var(--hl-accent-ink);
+  --sel: var(--hl-pink);
+  --sel-bg: var(--hl-pink-bg);
+  --success: var(--hl-ok);
+  --warning: var(--hl-warn);
+  --danger: var(--hl-danger);
+  --info: var(--hl-info);
+  --radius-lg: var(--hl-r-lg);
+}
+
+body { background: var(--hl-backdrop) fixed, var(--hl-base); font-family: var(--hl-font); }
+
+/* frosted surfaces */
+header {
+  background: rgba(16, 14, 24, .42);
+  -webkit-backdrop-filter: var(--hl-blur); backdrop-filter: var(--hl-blur);
+  border-bottom-color: var(--hl-stroke);
+}
+.glass {
+  background: var(--hl-sheen), var(--hl-glass);
+  -webkit-backdrop-filter: var(--hl-blur); backdrop-filter: var(--hl-blur);
+  box-shadow: var(--hl-shadow-sm);
+}
+.timeline {
+  background: var(--hl-sheen), rgba(16, 14, 24, .5);
+  -webkit-backdrop-filter: var(--hl-blur); backdrop-filter: var(--hl-blur);
+}
+:root[data-layout="narrow"] .side,
+:root[data-layout="narrow"] .side-r,
+.clip-picker, .proj-pop, .splash {
+  -webkit-backdrop-filter: var(--hl-blur); backdrop-filter: var(--hl-blur);
+}
+.overlay.splash-scrim { background: rgba(6, 5, 10, .55); }
+
+/* shading instead of outlines: wells sink, raised controls catch light */
+.main-tabs, .side-tabs, .color-sub, .pool-toggle { background: var(--hl-well); box-shadow: var(--hl-inset); }
+input:not([type=checkbox]):not([type=range]):not([type=color]), textarea, select { box-shadow: var(--hl-inset); }
+input:focus, textarea:focus { box-shadow: var(--hl-inset), 0 0 0 3px var(--accent-bg); }
+button.ghost, .btn-tp, .pill, .fx-btn, .fx-mod, .lut-item, .pool-thumb, .tl-clip, .timecode { box-shadow: var(--hl-hi); }
+input[type=checkbox] { box-shadow: var(--hl-inset); background: var(--hl-raise); }
+
+/* the picture stays neutral */
+.pv-canvas { background: var(--hl-picture); }
+
+/* primary actions carry the Halide gradient */
+button.accent, #projNew, .btn-tp.play.playing { background: var(--hl-accent-grad); color: #fff; }
+button.accent:hover, #projNew:hover { filter: brightness(1.08); }
+
+/* header: Halide home mark in place of the old brand */
+.brand .hl-home { margin-left: -6px; }
+:root[data-layout="narrow"] .hl-home b { display: none; }
+.splash-brand span { display: flex; flex-direction: column; line-height: 1; }
+.splash-brand .hl-over { font-size: 11px; letter-spacing: .3em; color: var(--hl-muted); font-weight: 800; margin-bottom: 4px; }

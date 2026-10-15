@@ -1,5 +1,6 @@
 import { boot as bootHalide } from '../shared/boot.ts';
 bootHalide({ isolate: true });
+import { homeLink } from '../shared/brand.ts';
 // Bootstrap: WebGPU renderer + playback engine + tab wiring + transport + keys.
 import { state, bus, timelineDuration, videoProgram, addTitle, toggleMarker, rippleDelete, appendClip, defaultGrade, findClipRef, clipEnd } from './state.js';
 import { el, $$, fmtTC, toast } from './util.js';
@@ -36,7 +37,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
 window.addEventListener('appinstalled', () => {
   const b = document.getElementById('pwaInstall');
   if (b) b.hidden = true;
-  toast('Eddit installed — find it with your apps');
+  toast('Halide installed — find it with your apps');
 });
 const renderer = new Renderer();
 let engine;
@@ -69,7 +70,7 @@ function openDiag() {
 }
 
 async function boot() {
-  console.log('%cEddit ' + BUILD, 'color:#5fd598;font-weight:700');
+  console.log('%cHalide Edit ' + BUILD, 'color:#b49cff;font-weight:700');
   const bt = el('buildTag'); if (bt) bt.textContent = BUILD;
   const supported = await renderer.init();
   if (!supported) toast('WebGPU not available — use Chrome/Edge 113+ with GPU enabled', true, 6000);
@@ -174,14 +175,15 @@ async function boot() {
   window.__eddit = { ...window.__eddit, renderer, engine, state, bus, appendClip, defaultGrade };
 
   // diagnostics overlay (tap the ffmpeg pill or the build tag)
-  if (el('brandLogo')) el('brandLogo').onclick = openDiag;   // quiet diagnostics entry
+  el('hlHome')?.replaceWith(homeLink('Edit'));
+  if (el('buildTag')) { el('buildTag').onclick = openDiag; el('buildTag').style.cursor = 'pointer'; }   // quiet diagnostics entry
   el('diagClose').onclick = () => el('diagOverlay').classList.add('hidden');
   el('diagClear').onclick = () => { DIAG.length = 0; renderDiag(); };
   el('diagCopy').onclick = async () => {
     try { await navigator.clipboard.writeText(DIAG.join('\n')); toast('Diagnostics copied'); }
     catch { const pre = el('diagLog'); const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast('Selected — long-press → Copy'); }
   };
-  console.log('Eddit', BUILD, '· UA', navigator.userAgent, '· COI', self.crossOriginIsolated);
+  console.log('Halide Edit', BUILD, '· UA', navigator.userAgent, '· COI', self.crossOriginIsolated);
 }
 
 function activeCanvas() {
