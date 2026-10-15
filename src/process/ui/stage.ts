@@ -30,6 +30,10 @@ function displaySize(it: Item): [number, number] {
   const cw = Math.round(gw * k), ch = Math.round(gh * k);
   view.style.width = cw + 'px';
   view.style.height = ch + 'px';
+  // the picture is the viewport: the video bar sits right under it (CSS)
+  stage.style.setProperty('--vw', cw + 'px');
+  stage.style.setProperty('--vh', ch + 'px');
+  stage.classList.toggle('vid', it.kind === 'video');
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   // When zoomed in, render more pixels so the enlarged view stays sharp (bounded by the source).
   let pw = cw * dpr * renderZ, ph = ch * dpr * renderZ;
@@ -46,7 +50,7 @@ function paint() {
   raf = 0;
   const it = curItem();
   updateChips();
-  if (!it || it.status !== 'ready') { view.hidden = true; return; }
+  if (!it || it.status !== 'ready') { view.hidden = true; stage.classList.remove('vid'); return; }
   view.hidden = false;
   const [w, hh] = displaySize(it);
   if (it.kind === 'video') {

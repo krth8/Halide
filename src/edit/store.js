@@ -2,9 +2,11 @@
 // this page's IndexedDB, proxy blobs in OPFS.
 // Survives reload and works on Android (no File System Access needed) — the
 // project reopens fully playable/gradeable/exportable from cached proxies;
-// originals are only needed to re-link for full-res export.
+// originals are only needed to re-link for full-res export. Originals picked
+// without a file handle (phones, Safari) are kept as copies in OPFS too.
 
 import * as P from '../shared/projects.ts';
+import { keepOriginal } from '../shared/media/originals.ts';
 
 const DB_NAME = 'halide-edit';
 const STORE = 'kv';
@@ -48,10 +50,12 @@ function serialize(state) {
     // FileSystemFileHandle is structured-clonable → survives in IndexedDB, so
     // restarts can re-acquire the original and resume proxy builds
     handle: m.handle || null,
+    original: m.original || null,   // kept copy (no handle to reopen it with)
   }));
   const grades = {};
   for (const [k, g] of Object.entries(state.grades)) grades[k] = { ...g, lut: null };
-  return { v: 2, media, tracks: state.tracks, grades, fps: state.fps, markers: state.markers || [], masterVolume: state.masterVolume ?? 1, project: state.project || { format: '16:9', height: 1080 }, saved: true };
+  const originals = media.flatMap((x) => (x.original ? [x.original] : []));
+  return { v: 2, media, originals, tracks: state.tracks, grades, fps: state.fps, markers: state.markers || [], masterVolume: state.masterVolume ?? 1, project: state.project || { format: '16:9', height: 1080 }, saved: true };
 }
 
 function clipCount(state) {
@@ -74,6 +78,7 @@ export async function saveProject(state) {
     currentId = await P.createProject('edit', 'Untitled');
     P.setUrlProject(currentId);
   }
+  keepCopies(state);
   const payload = serialize(state);
   const card = { count: clipCount(state), thumb: state.media.find((m) => m.thumb)?.thumb || null };
   try { await P.saveProject(currentId, payload, card); }
@@ -81,6 +86,17 @@ export async function saveProject(state) {
     // a browser that can't clone handles must still save the project
     for (const m of payload.media) m.handle = null;
     await P.saveProject(currentId, payload, card);
+  }
+}
+
+// no handle to reopen an original with: keep a copy, then save again
+const copying = new WeakSet();
+function keepCopies(state) {
+  for (const m of state.media) {
+    const f = m.file;
+    if (!f || !f.size || m.handle || m.original || copying.has(f)) continue;
+    copying.add(f);
+    keepOriginal(f).then((k) => { if (k && m.file === f) { m.original = k; saveProject(state).catch(() => {}); } });
   }
 }
 

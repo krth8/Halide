@@ -11,6 +11,7 @@ import { proxyKey, isCurrentProxyKey, loadProxy, saveProxy, proxyBytes, clearPro
 import { findLut, LUT_CATEGORIES } from '../luts.js';
 import { ffmpegLoaded, ffmpegMultithread, abortTranscode } from '../media/ffmpeg.js';
 import { isMcraw, openMcraw } from '../media/mcraw.js';
+import { loadOriginal } from '../../shared/media/originals.ts';
 
 let engine = null;
 let caps = { decode: false, encode: false, hevc: false };
@@ -37,6 +38,7 @@ export async function initMedia(eng) {
   const doPick = async () => { const files = await pickMedia(); if (files.length) importFiles(files); };
   el('importBtn').onclick = doPick;
   el('emptyImport').onclick = doPick;
+  el('mediaAddBtn').onclick = doPick;   // narrow: the pool's import buttons sit in the drawer
   el('importFolderBtn').onclick = async () => { const files = await pickFolder(); if (files.length) importFiles(files, { explicit: false }); };
   el('fileInput').onchange = (e) => importFiles([...e.target.files]); // legacy fallback
 
@@ -858,7 +860,7 @@ export async function restore(proj) {
     const m = {
       id: pm.id, name: pm.name, size: pm.size, path: pm.path || '', file: null, url: null,
       width: pm.width, height: pm.height, duration: pm.duration, thumb: pm.thumb,
-      strip: pm.strip || null, handle: pm.handle || null,
+      strip: pm.strip || null, handle: pm.handle || null, original: pm.original || null,
       kind: pm.kind || 'video',
       proxyKey: pm.proxyKey || null, proxyW: pm.proxyW, proxyH: pm.proxyH,
       proxyReady: false, proxyStatus: 'unlinked',
@@ -898,6 +900,11 @@ export async function restore(proj) {
       await adoptHandleFile(m);
     } catch {}
   }
+  // no handle: the copy kept on the device (picked on a phone or in Safari)
+  for (const m of state.media) {
+    if (m.file || !m.original) continue;
+    try { const f = await loadOriginal(m.original, m.name); if (f) await adoptFile(m, f); } catch {}
+  }
   state.project = proj.project || { format: '16:9', height: 1080 };
   bus.emit('project:restored');
   state.markers = proj.markers || [];
@@ -927,7 +934,7 @@ export async function restore(proj) {
     }
     if (healed) bus.emit('media:changed');   // persist the regenerated thumbs
   })();
-  const unlinked = state.media.filter((m) => !m.proxyReady).length;
+  const unlinked = state.media.filter((m) => !m.proxyReady && !m.file).length;
   if (state.media.length) toast(`Restored project — ${state.media.length} clips${unlinked ? `, ${unlinked} need re-import` : ''}`, false, 3500);
 }
 
@@ -979,8 +986,8 @@ function thumbIsBlack(dataUrl) {
 }
 
 // take the File back from a stored handle; resume the proxy build if needed
-async function adoptHandleFile(m) {
-  const f = await m.handle.getFile();
+const adoptHandleFile = async (m) => adoptFile(m, await m.handle.getFile());
+async function adoptFile(m, f) {
   m.file = f;
   // playable isn't persisted — probe again rather than assume, so an HEVC
   // original isn't treated as natively decodable (by export or the proxy mode)
