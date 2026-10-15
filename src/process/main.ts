@@ -8,7 +8,7 @@ import { clone, type Item } from './model';
 import { canPickDir, fileKey, fromDrop, kindOf, loadItem, pickDirectory, pickFiles, type Picked } from './media';
 import { S, emit, on, restore, select } from './state';
 import * as store from './store';
-import { canConnect, connect, locate, offlineCount, openProject, pruneThumbs, saveNow, saveSoon } from './project';
+import { canConnect, connect, locate, offlineCount, openProject, placeInLibrary, pruneThumbs, saveNow, saveSoon } from './project';
 import { $, h, isPhone, toast } from './ui/dom';
 import { buildReel, refresh, setAddHandler, setRemoveHandler } from './ui/reel';
 import { build } from './ui/panel';
@@ -66,6 +66,7 @@ async function addFiles(p: Picked) {
   select(first ? 0 : S.items.length - fresh.length);
   saveSoon();
   toast(`Added ${fresh.length} ${fresh.length === 1 ? 'file' : 'files'}`);
+  placeInLibrary(fresh).catch(() => {});
   await loadAll(fresh);
   const bad = fresh.filter((i) => i.status === 'error').length;
   if (bad) toast(`${bad} ${bad === 1 ? 'file' : 'files'} could not be read`);
@@ -92,6 +93,7 @@ async function relocate(p: Picked | null) {
 async function cameOnline(back: Item[]) {
   syncRelink();
   if (!back.length) return;
+  placeInLibrary(back).catch(() => {});   // older projects move to one grant per folder
   back.forEach(refresh);
   emit('items');
   saveSoon();

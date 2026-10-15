@@ -11,6 +11,7 @@ import { proxyKey, isCurrentProxyKey, loadProxy, saveProxy, proxyBytes, clearPro
 import { findLut, LUT_CATEGORIES } from '../luts.js';
 import { ffmpegLoaded, ffmpegMultithread, abortTranscode } from '../media/ffmpeg.js';
 import { isMcraw, openMcraw } from '../media/mcraw.js';
+import { grantFor, offerLibrary, openRef, place } from '../../shared/media/library.ts';
 
 let engine = null;
 let caps = { decode: false, encode: false, hevc: false };
@@ -188,6 +189,7 @@ async function importFiles(files, { explicit = true, targets = null } = {}) {
   }
   renderGrid();
   toast(`Indexed ${work.length} clip${work.length === 1 ? '' : 's'}`);
+  placeMedia(work.map((w) => w.m)).catch(() => {});
 
   // PHASE 2 — probe metadata per clip, then hand it to the proxy queue (whose
   // ffmpeg tier also converts clips nothing native can decode)
@@ -862,7 +864,7 @@ export async function restore(proj) {
     const m = {
       id: pm.id, name: pm.name, size: pm.size, path: pm.path || '', file: null, url: null,
       width: pm.width, height: pm.height, duration: pm.duration, thumb: pm.thumb,
-      strip: pm.strip || null, handle: pm.handle || null,
+      strip: pm.strip || null, handle: pm.handle || null, lib: pm.lib || null,
       kind: pm.kind || 'video',
       proxyKey: pm.proxyKey || null, proxyW: pm.proxyW, proxyH: pm.proxyH,
       proxyReady: false, proxyStatus: 'unlinked',
@@ -891,6 +893,12 @@ export async function restore(proj) {
   else if (proj.timeline) { // migrate v1 single-track projects
     let t = 0; const clips = proj.timeline.map((c) => { const start = t; t += Math.max(0.02, (c.out - c.in)); return { ...c, start, speed: 1, volume: 1, mute: false, pitch: 0, kind: 'video' }; });
     state.tracks = { video: [{ id: 'v0', clips }], audio: [{ id: 'a0', clips: [] }] };
+  }
+  // library folders already readable (permission kept): reopen silently
+  const libOk = await grantFor(state.media.filter((m) => m.lib).map((m) => m.lib), false).catch(() => new Set());
+  for (const m of state.media) {
+    if (m.file || !m.lib || !libOk.has(m.lib.lib)) continue;
+    try { const f = await openRef(m.lib); if (f) await adoptFile(m, f); } catch {}
   }
   // re-acquire originals from persisted handles — silent path only (permission
   // already granted, e.g. installed-PWA persistent permissions). 'prompt' needs
@@ -943,13 +951,45 @@ function syncRelink() {
   b.classList.toggle('hidden', !n);
   b.textContent = `Reconnect ${n}`;
 }
+// Finds clips in the library folders (offering to add one when they aren't
+// in any), so the project reopens them with one grant per folder.
+async function placeMedia(list) {
+  const todo = list.filter((m) => m.file && !m.lib && !m.removed);
+  if (!todo.length) return;
+  const find = async (ms) => {
+    const missed = [];
+    for (const m of ms) { const r = await place(m.file, m.handle); if (r) m.lib = r; else missed.push(m); }
+    return missed;
+  };
+  const missed = await find(todo);
+  if (missed.length && await offerLibrary()) await find(missed);
+  if (todo.some((m) => m.lib)) bus.emit('media:changed');
+}
+
 async function relinkAll() {
   const missing = state.media.filter((m) => !m.file);
+  // library folders: one Allow per folder brings back every clip in it
+  const inLib = missing.filter((m) => m.lib && !m._libTried);
+  if (inLib.length) {
+    inLib.forEach((m) => { m._libTried = true; });
+    const ok = await grantFor(inLib.map((m) => m.lib), true);
+    let n = 0;
+    for (const m of inLib) {
+      if (!ok.has(m.lib.lib)) continue;
+      const f = await openRef(m.lib);
+      if (f) { await adoptFile(m, f); updateCard(m); n++; }
+    }
+    if (n) bus.emit('media:changed');
+    const left = state.media.filter((m) => !m.file).length;
+    toast(`Reconnected ${n} file${n === 1 ? '' : 's'}${left ? ` — tap Reconnect for the other ${left}` : ''}`);
+    return;
+  }
   // stored handles (desktop Chromium): restore access, one prompt per file
   const withHandle = missing.filter((m) => m.handle && !m._handleTried);
   if (withHandle.length) {
     let n = 0;
     for (const m of withHandle) { m._handleTried = true; if (await relinkFromHandle(m)) n++; }
+    placeMedia(withHandle).catch(() => {});   // next time: one grant per folder
     const left = state.media.filter((m) => !m.file).length;
     toast(`Reconnected ${n} file${n === 1 ? '' : 's'}${left ? ` — tap Reconnect to pick the other ${left}` : ''}`);
     return;
@@ -1019,8 +1059,8 @@ function thumbIsBlack(dataUrl) {
 }
 
 // take the File back from a stored handle; resume the proxy build if needed
-async function adoptHandleFile(m) {
-  const f = await m.handle.getFile();
+const adoptHandleFile = async (m) => adoptFile(m, await m.handle.getFile());
+async function adoptFile(m, f) {
   m.file = f;
   // playable isn't persisted — probe again rather than assume, so an HEVC
   // original isn't treated as natively decodable (by export or the proxy mode)
