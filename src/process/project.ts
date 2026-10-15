@@ -1,22 +1,18 @@
 // Process projects. A project stores where its media lives — never the media:
 // a folder handle + relative path for folder imports, a file handle for files
 // picked or dropped one by one (File System Access), or just the name/size
-// where the browser gives no handle (Safari, Firefox, phones) — there a copy
-// is kept on the device (shared/media/originals). Each item's thumbnail
+// where the browser gives no handle (Safari, Firefox). Each item's thumbnail
 // is written once as a project asset, so a large library reopens instantly,
 // before any file is read; files reconnect when access is (re)granted.
 import { DEF, clone, type Item, type Kind, type Params } from './model';
 import { adoptHandle, fileKey, handleOf, openInDir, originOf, type Picked } from './media';
 import { S, type Saved, type Tab } from './state';
 import * as P from '../shared/projects';
-import { keepOriginal, loadOriginal } from '../shared/media/originals';
 
-type Ref = { t: 'dir'; d: number; path: string } | { t: 'file'; h: FileSystemFileHandle } | { t: 'copy'; key: string } | { t: 'none' };
+type Ref = { t: 'dir'; d: number; path: string } | { t: 'file'; h: FileSystemFileHandle } | { t: 'none' };
 interface SavedItem { key: string; name: string; kind: Kind; ref: Ref; w: number; h: number; dur: number; lum: number }
 interface Payload {
   v: 1; items: SavedItem[]; dirs: FileSystemDirectoryHandle[];
-  /** kept copies this project uses (read by pruneOriginals) */
-  originals: string[];
   G: Params; edits: Record<string, Saved>;
   cur: number; scope: 'all' | 'item'; tab: Tab; folderName: string;
 }
@@ -28,9 +24,6 @@ const pending = new Map<Item, Ref>();
 let pendingDirs: FileSystemDirectoryHandle[] = [];
 /** items whose thumbnail is already stored as a project asset */
 const thumbSaved = new WeakSet<Item>();
-/** kept copies of files that came without a handle */
-const copies = new WeakMap<File, string>();
-const copying = new WeakSet<File>();
 
 const blobToDataURL = (b: Blob) => new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
 async function jpeg(bm: ImageBitmap, q = 0.75): Promise<Blob> {
@@ -45,19 +38,7 @@ function refOf(it: Item, dirs: FileSystemDirectoryHandle[]): Ref {
   const o = originOf(it.file);
   if (o) { let d = dirs.indexOf(o.dir); if (d < 0) d = dirs.push(o.dir) - 1; return { t: 'dir', d, path: o.path }; }
   const h = handleOf(it.file);
-  if (h) return { t: 'file', h };
-  const c = copies.get(it.file);
-  return c ? { t: 'copy', key: c } : { t: 'none' };
-}
-
-/** No handle to reopen the file with: keep a copy, then save again. */
-function keepCopies(): void {
-  for (const it of S.items) {
-    const f = it.file;
-    if (pending.has(it) || !f.size || copies.has(f) || copying.has(f) || originOf(f) || handleOf(f)) continue;
-    copying.add(f);
-    keepOriginal(f).then((k) => { if (k) { copies.set(f, k); saveSoon(); } });
-  }
+  return h ? { t: 'file', h } : { t: 'none' };
 }
 
 function snapshot(): Payload {
@@ -67,8 +48,7 @@ function snapshot(): Payload {
     key: it.key, name: it.name, kind: it.kind, ref: refOf(it, dirs),
     w: it.width, h: it.height, dur: it.duration, lum: it.lum,
   }));
-  const originals = items.flatMap((x) => (x.ref.t === 'copy' ? [x.ref.key] : []));
-  return { v: 1, items, dirs, originals, G: S.G, edits: S.edits, cur: S.cur, scope: S.scope, tab: S.tab, folderName: S.folderName };
+  return { v: 1, items, dirs, G: S.G, edits: S.edits, cur: S.cur, scope: S.scope, tab: S.tab, folderName: S.folderName };
 }
 
 /* ---------- saving ---------- */
@@ -88,7 +68,6 @@ export async function saveNow(): Promise<void> {
   saving = (async () => {
     if (!projectId) { projectId = await P.createProject('process', S.folderName || 'Untitled'); P.setUrlProject(projectId); }
     const id = projectId;
-    keepCopies();
     // thumbnails: once per item, as project assets
     for (const it of S.items) {
       if (thumbSaved.has(it) || !it.thumb) continue;
@@ -100,7 +79,7 @@ export async function saveNow(): Promise<void> {
     try { await P.saveProject(id, payload, card); }
     catch {
       // a browser that can't store handles still keeps the project (name/size refs)
-      payload.items.forEach((x) => { if (x.ref.t !== 'copy') x.ref = { t: 'none' }; });
+      payload.items.forEach((x) => { x.ref = { t: 'none' }; });
       payload.dirs = [];
       await P.saveProject(id, payload, card).catch(() => {});
     }
@@ -146,6 +125,9 @@ export async function openProject(makeItem: (key: string, name: string, kind: Ki
 }
 
 export const offlineCount = () => pending.size;
+/** Whether any offline item has a stored handle — without one (phones,
+ *  Safari, Firefox) the only way back is picking the files again. */
+export const canConnect = () => [...pending.values()].some((r) => r.t !== 'none');
 
 async function permitted(h: FileSystemHandle, ask: boolean): Promise<boolean> {
   try {
@@ -175,9 +157,6 @@ export async function connect(ask: boolean): Promise<Item[]> {
       if (ref.t === 'dir' && dirOk[ref.d]) { attach(it, await openInDir(pendingDirs[ref.d], ref.path)); back.push(it); }
       else if (ref.t === 'file' && await permitted(ref.h, ask)) {
         const f = await ref.h.getFile(); adoptHandle(f, ref.h); attach(it, f); back.push(it);
-      } else if (ref.t === 'copy') {
-        const f = await loadOriginal(ref.key, it.name);
-        if (f) { copies.set(f, ref.key); attach(it, f); back.push(it); }
       }
     } catch { /* moved or deleted: stays offline until located */ }
   }
@@ -185,16 +164,20 @@ export async function connect(ask: boolean): Promise<Item[]> {
 }
 
 /** Matches offline items against freshly picked files (a folder or a
- *  selection): same name and size first, then same name. */
+ *  selection): same name and size first, then same name, then the same name
+ *  without extension (a phone picker may hand a photo back converted). */
 export function locate(p: Picked): Item[] {
+  const stem = (n: string) => n.replace(/\.[^.]+$/, '').toLowerCase();
   const byKey = new Map(p.files.map((f) => [fileKey(f), f]));
   const byNameSize = new Map(p.files.map((f) => [f.name + '|' + f.size, f]));
   const byNameOnly = new Map(p.files.map((f) => [f.name, f]));
+  const byStem = new Map(p.files.map((f) => [stem(f.name), f]));
+  const used = new Set<File>();
   const back: Item[] = [];
   for (const it of [...pending.keys()]) {
     const size = it.key.split('|')[1];
-    const f = byKey.get(it.key) ?? byNameSize.get(it.name + '|' + size) ?? byNameOnly.get(it.name);
-    if (f) { attach(it, f); back.push(it); }
+    const f = [byKey.get(it.key), byNameSize.get(it.name + '|' + size), byNameOnly.get(it.name), byStem.get(stem(it.name))].find((x) => x && !used.has(x));
+    if (f) { used.add(f); attach(it, f); back.push(it); }
   }
   return back;
 }

@@ -11,7 +11,6 @@ import { proxyKey, isCurrentProxyKey, loadProxy, saveProxy, proxyBytes, clearPro
 import { findLut, LUT_CATEGORIES } from '../luts.js';
 import { ffmpegLoaded, ffmpegMultithread, abortTranscode } from '../media/ffmpeg.js';
 import { isMcraw, openMcraw } from '../media/mcraw.js';
-import { loadOriginal } from '../../shared/media/originals.ts';
 
 let engine = null;
 let caps = { decode: false, encode: false, hevc: false };
@@ -39,6 +38,8 @@ export async function initMedia(eng) {
   el('importBtn').onclick = doPick;
   el('emptyImport').onclick = doPick;
   el('mediaAddBtn').onclick = doPick;   // narrow: the pool's import buttons sit in the drawer
+  el('relinkAllBtn').onclick = relinkAll;
+  bus.on('media:changed', syncRelink);
   el('importFolderBtn').onclick = async () => { const files = await pickFolder(); if (files.length) importFiles(files, { explicit: false }); };
   el('fileInput').onchange = (e) => importFiles([...e.target.files]); // legacy fallback
 
@@ -148,7 +149,7 @@ function audioDuration(url) {
 // is not explicit: camera rigs drop .wav next to the footage, and the old
 // blanket filter existed to keep those sidecars out of the pool. So audio is
 // imported when it was chosen and skipped when it was merely swept up.
-async function importFiles(files, { explicit = true } = {}) {
+async function importFiles(files, { explicit = true, targets = null } = {}) {
   files = [...files];
   const isVid = (f) => f.type.startsWith('video') || VIDEO_EXT.test(f.name);
   // stills (photos, RAW) come along when picked; a folder sweep takes them too
@@ -165,9 +166,10 @@ async function importFiles(files, { explicit = true } = {}) {
   for (const file of vids) {
     console.log('[import]', file.name, '· type:', file.type || '(none)', '· size:', file.size);
     // re-link: a restored-but-unlinked slot matching this file keeps its clips
-    const existing = state.media.find((x) => !x.file && x.name === file.name && x.size === file.size);
+    const existing = targets?.get(file) || state.media.find((x) => !x.file && x.name === file.name && x.size === file.size);
     if (existing) {
       existing.file = file; existing.handle = handleMap.get(file) || null;
+      if (existing.proxyStatus === 'unlinked') existing.proxyStatus = existing.proxyReady ? 'ready' : '';
       work.push({ m: existing, file, relink: true });
       continue;
     }
@@ -860,7 +862,7 @@ export async function restore(proj) {
     const m = {
       id: pm.id, name: pm.name, size: pm.size, path: pm.path || '', file: null, url: null,
       width: pm.width, height: pm.height, duration: pm.duration, thumb: pm.thumb,
-      strip: pm.strip || null, handle: pm.handle || null, original: pm.original || null,
+      strip: pm.strip || null, handle: pm.handle || null,
       kind: pm.kind || 'video',
       proxyKey: pm.proxyKey || null, proxyW: pm.proxyW, proxyH: pm.proxyH,
       proxyReady: false, proxyStatus: 'unlinked',
@@ -900,11 +902,6 @@ export async function restore(proj) {
       await adoptHandleFile(m);
     } catch {}
   }
-  // no handle: the copy kept on the device (picked on a phone or in Safari)
-  for (const m of state.media) {
-    if (m.file || !m.original) continue;
-    try { const f = await loadOriginal(m.original, m.name); if (f) await adoptFile(m, f); } catch {}
-  }
   state.project = proj.project || { format: '16:9', height: 1080 };
   bus.emit('project:restored');
   state.markers = proj.markers || [];
@@ -934,8 +931,44 @@ export async function restore(proj) {
     }
     if (healed) bus.emit('media:changed');   // persist the regenerated thumbs
   })();
-  const unlinked = state.media.filter((m) => !m.proxyReady && !m.file).length;
-  if (state.media.length) toast(`Restored project — ${state.media.length} clips${unlinked ? `, ${unlinked} need re-import` : ''}`, false, 3500);
+  const unlinked = state.media.filter((m) => !m.proxyReady).length;
+  if (state.media.length) toast(`Restored project — ${state.media.length} clips${unlinked ? `, ${unlinked} need Reconnect` : ''}`, false, 3500);
+  syncRelink();
+}
+
+// ---- reconnect: one tap brings back every original of a reopened project ----
+function syncRelink() {
+  const n = state.media.filter((m) => !m.file).length;
+  const b = el('relinkAllBtn');
+  b.classList.toggle('hidden', !n);
+  b.textContent = `Reconnect ${n}`;
+}
+async function relinkAll() {
+  const missing = state.media.filter((m) => !m.file);
+  // stored handles (desktop Chromium): restore access, one prompt per file
+  const withHandle = missing.filter((m) => m.handle && !m._handleTried);
+  if (withHandle.length) {
+    let n = 0;
+    for (const m of withHandle) { m._handleTried = true; if (await relinkFromHandle(m)) n++; }
+    const left = state.media.filter((m) => !m.file).length;
+    toast(`Reconnected ${n} file${n === 1 ? '' : 's'}${left ? ` — tap Reconnect to pick the other ${left}` : ''}`);
+    return;
+  }
+  // phones/Safari keep no handles: pick the files again — no await before the
+  // picker, the tap's user activation must reach it. Select them all at once.
+  const files = await pickMedia();
+  if (!files.length) return;
+  const stem = (n) => n.replace(/\.[^.]+$/, '').toLowerCase();
+  const targets = new Map();
+  const free = new Set(files);
+  const take = (m, ok) => { const f = [...free].find(ok); if (f) { free.delete(f); targets.set(f, m); return true; } return false; };
+  for (const m of missing) {
+    take(m, (f) => f.name === m.name && f.size === m.size) || take(m, (f) => f.name === m.name) || take(m, (f) => stem(f.name) === stem(m.name));
+  }
+  const left = missing.length - targets.size;
+  if (!targets.size) return toast('None of the missing files were among those', true);
+  if (left) toast(`${left} still missing`);
+  await importFiles([...targets.keys()], { targets });
 }
 
 function removeMedia(id) {
@@ -986,8 +1019,8 @@ function thumbIsBlack(dataUrl) {
 }
 
 // take the File back from a stored handle; resume the proxy build if needed
-const adoptHandleFile = async (m) => adoptFile(m, await m.handle.getFile());
-async function adoptFile(m, f) {
+async function adoptHandleFile(m) {
+  const f = await m.handle.getFile();
   m.file = f;
   // playable isn't persisted — probe again rather than assume, so an HEVC
   // original isn't treated as natively decodable (by export or the proxy mode)

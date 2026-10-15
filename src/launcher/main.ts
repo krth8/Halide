@@ -6,7 +6,6 @@ import { halideMark, PROCESS_GLYPH, EDIT_GLYPH } from '../shared/brand';
 import { listProjects, renameProject, duplicateProject, deleteProject, workspaceUrl, type ProjectMeta, type Workspace } from '../shared/projects';
 import { RELEASES, semverGt, type Tag } from '../shared/releases';
 import { toast } from '../shared/dialog';
-import { pruneOriginals } from '../shared/media/originals';
 
 const $ = (id: string) => document.getElementById(id)!;
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -38,7 +37,6 @@ async function commitDelete(id: string) {
   clearTimeout(deleting.get(id));
   deleting.delete(id);
   await deleteProject(id).catch(() => {});
-  pruneOriginals();
 }
 addEventListener('pagehide', () => { for (const id of [...deleting.keys()]) commitDelete(id); });
 
@@ -165,4 +163,3 @@ if (isIOS && !isApp()) $('iosHint').hidden = false;
 renderProjects();
 renderNews();
 boot();
-pruneOriginals();   // kept copies of media no project uses any more
