@@ -1007,6 +1007,17 @@ header{padding-left:calc(18px + env(safe-area-inset-left));padding-right:calc(18
 :root[data-layout="narrow"] .brand-name{display:none}
 :root[data-layout="narrow"] .main-tabs{overflow-x:auto;scrollbar-width:none;max-width:calc(100vw - 150px)}
 :root[data-layout="narrow"] .main-tabs::-webkit-scrollbar{display:none}
+/* standalone PWA draws under the status bar (black-translucent): clear it */
+header{flex:none;height:calc(50px + env(safe-area-inset-top));padding-top:env(safe-area-inset-top)}
+/* phone portrait: two rows so the tabs never sit under the camera —
+   logo + buttons on top, full-width tabs below */
+:root[data-layout="narrow"][data-orient="portrait"]:not([data-tablet]) header{height:auto;
+  grid-template-columns:1fr auto;grid-template-areas:"brand right" "tabs tabs";row-gap:6px;
+  padding-top:calc(6px + env(safe-area-inset-top));padding-bottom:8px}
+:root[data-layout="narrow"][data-orient="portrait"]:not([data-tablet]) .brand{grid-area:brand;min-height:36px}
+:root[data-layout="narrow"][data-orient="portrait"]:not([data-tablet]) .hdr-right{grid-area:right}
+:root[data-layout="narrow"][data-orient="portrait"]:not([data-tablet]) .main-tabs{grid-area:tabs;max-width:none}
+:root[data-layout="narrow"][data-orient="portrait"]:not([data-tablet]) .main-tab{flex:1;padding:7px 0}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:500;
   background:var(--bg-elevated);border:1px solid var(--border-medium);border-radius:var(--radius-full);
   padding:10px 20px;font-size:13px;box-shadow:0 12px 34px rgba(0,0,0,.5);opacity:0;transition:opacity .25s,transform .25s;pointer-events:none}
