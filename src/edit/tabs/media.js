@@ -41,7 +41,9 @@ export async function initMedia(eng) {
   el('mediaAddBtn').onclick = doPick;   // narrow: the pool's import buttons sit in the drawer
   el('relinkAllBtn').onclick = relinkAll;
   bus.on('media:changed', syncRelink);
-  el('importFolderBtn').onclick = async () => { const files = await pickFolder(); if (files.length) importFiles(files, { explicit: false }); };
+  const doPickFolder = async () => { const files = await pickFolder(); if (files.length) importFiles(files, { explicit: false }); };
+  el('importFolderBtn').onclick = doPickFolder;
+  el('emptyImportFolder').onclick = doPickFolder;
   el('fileInput').onchange = (e) => importFiles([...e.target.files]); // legacy fallback
 
   // drag & drop anywhere on the Media tab
