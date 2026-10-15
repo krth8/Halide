@@ -8,7 +8,7 @@ import { clone, type Item } from './model';
 import { canPickDir, fileKey, fromDrop, kindOf, loadItem, pickDirectory, pickFiles, type Picked } from './media';
 import { S, emit, on, restore, select } from './state';
 import * as store from './store';
-import { connect, locate, offlineCount, openProject, pruneThumbs, saveNow, saveSoon } from './project';
+import { canConnect, connect, locate, offlineCount, openProject, placeInLibrary, pruneThumbs, saveNow, saveSoon } from './project';
 import { $, h, isPhone, toast } from './ui/dom';
 import { buildReel, refresh, setAddHandler, setRemoveHandler } from './ui/reel';
 import { build } from './ui/panel';
@@ -66,6 +66,7 @@ async function addFiles(p: Picked) {
   select(first ? 0 : S.items.length - fresh.length);
   saveSoon();
   toast(`Added ${fresh.length} ${fresh.length === 1 ? 'file' : 'files'}`);
+  placeInLibrary(fresh).catch(() => {});
   await loadAll(fresh);
   const bad = fresh.filter((i) => i.status === 'error').length;
   if (bad) toast(`${bad} ${bad === 1 ? 'file' : 'files'} could not be read`);
@@ -76,28 +77,43 @@ const relinkBar = $('#relinkBar');
 function syncRelink() {
   const n = offlineCount();
   relinkBar.hidden = !n;
-  if (n) $('#relinkText').textContent = `${n} ${n === 1 ? 'file is' : 'files are'} not connected`;
+  if (!n) return;
+  $('#relinkText').textContent = `${n} ${n === 1 ? 'file is' : 'files are'} not connected`;
+  // no stored handles: Reconnect itself asks for the files, so Locate is the same thing
+  $('#locateBtn').hidden = !canConnect();
+}
+async function relocate(p: Picked | null) {
+  if (!p) return;
+  const back = locate(p);
+  const left = offlineCount();
+  toast(!back.length ? 'None of the missing files were among those'
+    : `Reconnected ${back.length} ${back.length === 1 ? 'file' : 'files'}${left ? ` — ${left} still missing` : ''}`);
+  await cameOnline(back);
 }
 async function cameOnline(back: Item[]) {
   syncRelink();
   if (!back.length) return;
+  placeInLibrary(back).catch(() => {});   // older projects move to one grant per folder
   back.forEach(refresh);
   emit('items');
   saveSoon();
   await loadAll(back.filter((i) => i.status === 'loading'));
 }
 $('#relinkBtn').onclick = async () => {
+  // phones/Safari keep no handles: open the picker straight away (no await
+  // before it — the tap's user activation must reach the file input) and
+  // match every picked file at once; select them all in one go
+  if (!canConnect()) {
+    try { await relocate(canPickDir ? await pickDirectory() : await pickFiles()); } catch (e) { toast((e as Error).message); }
+    return;
+  }
   const back = await connect(true);
   await cameOnline(back);
   if (offlineCount()) toast('Some files could not be reopened — use Locate… to point at their folder');
 };
 $('#locateBtn').onclick = async () => {
   try {
-    const p = canPickDir ? await pickDirectory() : await pickFiles(true);
-    if (!p) return;
-    const back = locate(p);
-    toast(back.length ? `Reconnected ${back.length} ${back.length === 1 ? 'file' : 'files'}` : 'None of the missing files were found there');
-    await cameOnline(back);
+    await relocate(canPickDir ? await pickDirectory() : await pickFiles(!isPhone()));
   } catch (e) { toast((e as Error).message); }
 };
 

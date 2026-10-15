@@ -36,7 +36,6 @@ function syncChrome() {
   $('#scopeItem').textContent = it ? 'Only ' + it.name.replace(/\.[^.]+$/, '') : 'This item only';
   panel.classList.toggle('scope-item', S.scope === 'item');
   panel.classList.toggle('open', S.sheetOpen);
-  $('#sheetOpen').hidden = S.sheetOpen || !it;
   app.classList.toggle('sheet-open', S.sheetOpen && isPhone());
   if (S.sheetOpen) requestAnimationFrame(() => app.style.setProperty('--sheetH', panel.offsetHeight + 'px'));
   scopeNote();
@@ -96,7 +95,6 @@ $('#toolbar').onclick = (e) => {
   openTab(b.dataset.tab as Tab);
 };
 $('#sheetDone').onclick = () => { S.sheetOpen = false; syncChrome(); };
-$('#sheetOpen').onclick = () => { S.sheetOpen = true; build(); };
 {
   let y0: number | null = null;
   const sh = $('#sheethead');

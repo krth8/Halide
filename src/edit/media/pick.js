@@ -6,6 +6,7 @@
 //    app, hiding the Downloads folder; listing extensions forces the system
 //    Documents picker where Downloads is reachable.
 import { STILL_EXTS } from './still.js';
+import { addRoot } from '../../shared/media/library.ts';
 export const handleMap = new WeakMap(); // File -> FileSystemFileHandle (when available)
 export const pathMap = new WeakMap();   // File -> relative path (folder import)
 
@@ -54,6 +55,7 @@ export async function pickFolder() {
   if (window.showDirectoryPicker) {
     try {
       const dir = await window.showDirectoryPicker();
+      addRoot(dir).catch(() => {});   // its files reconnect with one grant
       const files = [];
       await walk(dir, '', files);
       return files;

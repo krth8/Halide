@@ -1,15 +1,18 @@
 // Process projects. A project stores where its media lives — never the media:
 // a folder handle + relative path for folder imports, a file handle for files
 // picked or dropped one by one (File System Access), or just the name/size
-// where the browser gives no handle (Safari, Firefox). Each item's thumbnail
+// where the browser gives no handle (Safari, Firefox). A file that lives in a
+// library folder (shared/media/library) is stored as folder + path, so it
+// reconnects with the folder's one grant. Each item's thumbnail
 // is written once as a project asset, so a large library reopens instantly,
 // before any file is read; files reconnect when access is (re)granted.
 import { DEF, clone, type Item, type Kind, type Params } from './model';
 import { adoptHandle, fileKey, handleOf, openInDir, originOf, type Picked } from './media';
 import { S, type Saved, type Tab } from './state';
 import * as P from '../shared/projects';
+import { grantFor, offerLibrary, openRef, place, type LibRef } from '../shared/media/library';
 
-type Ref = { t: 'dir'; d: number; path: string } | { t: 'file'; h: FileSystemFileHandle } | { t: 'none' };
+type Ref = { t: 'dir'; d: number; path: string } | ({ t: 'lib' } & LibRef) | { t: 'file'; h: FileSystemFileHandle } | { t: 'none' };
 interface SavedItem { key: string; name: string; kind: Kind; ref: Ref; w: number; h: number; dur: number; lum: number }
 interface Payload {
   v: 1; items: SavedItem[]; dirs: FileSystemDirectoryHandle[];
@@ -24,6 +27,8 @@ const pending = new Map<Item, Ref>();
 let pendingDirs: FileSystemDirectoryHandle[] = [];
 /** items whose thumbnail is already stored as a project asset */
 const thumbSaved = new WeakSet<Item>();
+/** files found in a library folder */
+const libOf = new WeakMap<File, LibRef>();
 
 const blobToDataURL = (b: Blob) => new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
 async function jpeg(bm: ImageBitmap, q = 0.75): Promise<Blob> {
@@ -37,8 +42,25 @@ function refOf(it: Item, dirs: FileSystemDirectoryHandle[]): Ref {
   if (p) return p.t === 'dir' ? { ...p, d: dirs.indexOf(pendingDirs[p.d]) } : p;   // not reconnected yet: keep its old ref
   const o = originOf(it.file);
   if (o) { let d = dirs.indexOf(o.dir); if (d < 0) d = dirs.push(o.dir) - 1; return { t: 'dir', d, path: o.path }; }
+  const l = libOf.get(it.file);
+  if (l) return { t: 'lib', ...l };
   const h = handleOf(it.file);
   return h ? { t: 'file', h } : { t: 'none' };
+}
+
+/** Finds new items in the library folders (offering to add one when they
+ *  aren't in any), so the project reopens them with one grant. */
+export async function placeInLibrary(items: Item[]): Promise<void> {
+  const todo = items.filter((it) => !pending.has(it) && it.file.size && !originOf(it.file) && !libOf.has(it.file));
+  if (!todo.length) return;
+  const find = async (list: Item[]) => {
+    const missed: Item[] = [];
+    for (const it of list) { const r = await place(it.file, handleOf(it.file)); if (r) libOf.set(it.file, r); else missed.push(it); }
+    return missed;
+  };
+  const missed = await find(todo);
+  if (missed.length && await offerLibrary()) await find(missed);
+  if (todo.some((it) => libOf.has(it.file))) saveSoon();
 }
 
 function snapshot(): Payload {
@@ -79,7 +101,7 @@ export async function saveNow(): Promise<void> {
     try { await P.saveProject(id, payload, card); }
     catch {
       // a browser that can't store handles still keeps the project (name/size refs)
-      payload.items.forEach((x) => { x.ref = { t: 'none' }; });
+      payload.items.forEach((x) => { if (x.ref.t !== 'lib') x.ref = { t: 'none' }; });
       payload.dirs = [];
       await P.saveProject(id, payload, card).catch(() => {});
     }
@@ -125,6 +147,9 @@ export async function openProject(makeItem: (key: string, name: string, kind: Ki
 }
 
 export const offlineCount = () => pending.size;
+/** Whether any offline item has a stored handle — without one (phones,
+ *  Safari, Firefox) the only way back is picking the files again. */
+export const canConnect = () => [...pending.values()].some((r) => r.t !== 'none');
 
 async function permitted(h: FileSystemHandle, ask: boolean): Promise<boolean> {
   try {
@@ -149,9 +174,14 @@ export async function connect(ask: boolean): Promise<Item[]> {
   const back: Item[] = [];
   const dirOk = await Promise.all(pendingDirs.map((d) => permitted(d, false)));
   if (ask) for (let i = 0; i < pendingDirs.length; i++) if (!dirOk[i]) dirOk[i] = await permitted(pendingDirs[i], true);
+  const libOk = await grantFor([...pending.values()].flatMap((r) => (r.t === 'lib' ? [r] : [])), ask);
   for (const [it, ref] of [...pending]) {
     try {
       if (ref.t === 'dir' && dirOk[ref.d]) { attach(it, await openInDir(pendingDirs[ref.d], ref.path)); back.push(it); }
+      else if (ref.t === 'lib' && libOk.has(ref.lib)) {
+        const f = await openRef(ref);
+        if (f) { libOf.set(f, { lib: ref.lib, path: ref.path }); attach(it, f); back.push(it); }
+      }
       else if (ref.t === 'file' && await permitted(ref.h, ask)) {
         const f = await ref.h.getFile(); adoptHandle(f, ref.h); attach(it, f); back.push(it);
       }
@@ -161,16 +191,20 @@ export async function connect(ask: boolean): Promise<Item[]> {
 }
 
 /** Matches offline items against freshly picked files (a folder or a
- *  selection): same name and size first, then same name. */
+ *  selection): same name and size first, then same name, then the same name
+ *  without extension (a phone picker may hand a photo back converted). */
 export function locate(p: Picked): Item[] {
+  const stem = (n: string) => n.replace(/\.[^.]+$/, '').toLowerCase();
   const byKey = new Map(p.files.map((f) => [fileKey(f), f]));
   const byNameSize = new Map(p.files.map((f) => [f.name + '|' + f.size, f]));
   const byNameOnly = new Map(p.files.map((f) => [f.name, f]));
+  const byStem = new Map(p.files.map((f) => [stem(f.name), f]));
+  const used = new Set<File>();
   const back: Item[] = [];
   for (const it of [...pending.keys()]) {
     const size = it.key.split('|')[1];
-    const f = byKey.get(it.key) ?? byNameSize.get(it.name + '|' + size) ?? byNameOnly.get(it.name);
-    if (f) { attach(it, f); back.push(it); }
+    const f = [byKey.get(it.key), byNameSize.get(it.name + '|' + size), byNameOnly.get(it.name), byStem.get(stem(it.name))].find((x) => x && !used.has(x));
+    if (f) { used.add(f); attach(it, f); back.push(it); }
   }
   return back;
 }

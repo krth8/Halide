@@ -117,6 +117,13 @@ export async function pruneAssets(id: string, keep: Set<string>): Promise<void> 
   if (gone.length) await run(['assets'], 'readwrite', (t) => { for (const k of gone) t.objectStore('assets').delete(k); });
 }
 
+/* ---------- shared records: app-wide, not tied to a project ---------- */
+// kept in the assets store under a prefix no project id can start with
+export const putShared = (name: string, val: unknown) =>
+  run(['assets'], 'readwrite', (t) => { t.objectStore('assets').put(val, `_shared/${name}`); });
+export const getShared = <T = unknown>(name: string) =>
+  run<T | undefined>(['assets'], 'readonly', (t) => t.objectStore('assets').get(`_shared/${name}`));
+
 /** URL of a workspace page, optionally opening a project. */
 export function workspaceUrl(base: string, ws: Workspace, id?: string): string {
   return `${base}${ws}/${id ? `?p=${encodeURIComponent(id)}` : ''}`;

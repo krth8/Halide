@@ -64,6 +64,9 @@ body {
   border: 0; border-radius: 999px; padding: 7px 14px; cursor: pointer; font: 600 12.5px var(--hl-font);
   background: var(--hl-accent-grad); color: var(--hl-accent-ink); box-shadow: var(--hl-hi);
 }
+.ios-hint { margin: 0; color: var(--hl-muted); font-size: 13px; text-align: center; }
+.ios-hint b { color: var(--hl-text); font-weight: 600; }
+.ios-hint svg { vertical-align: -2px; }
 
 /* workspace badge (projects and release notes) */
 .ws { display: inline-block; flex: none; font: 700 10px/1 var(--hl-font); letter-spacing: .08em; text-transform: uppercase;

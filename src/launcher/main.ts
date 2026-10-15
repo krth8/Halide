@@ -156,6 +156,9 @@ $('install').onclick = async () => {
   try { await installEv.userChoice; } catch { /* dismissed */ }
   installEv = null; $('install').hidden = true;
 };
+// iOS never fires beforeinstallprompt: installing is Share → Add to Home Screen
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+if (isIOS && !isApp()) $('iosHint').hidden = false;
 
 renderProjects();
 renderNews();

@@ -48,6 +48,7 @@ function serialize(state) {
     // FileSystemFileHandle is structured-clonable → survives in IndexedDB, so
     // restarts can re-acquire the original and resume proxy builds
     handle: m.handle || null,
+    lib: m.lib || null,   // library folder + path: one grant reopens it (shared/media/library)
   }));
   const grades = {};
   for (const [k, g] of Object.entries(state.grades)) grades[k] = { ...g, lut: null };

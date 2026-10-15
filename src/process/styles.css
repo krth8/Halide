@@ -63,7 +63,9 @@ body:not(.has-items) #exportBtn { display: none; }
 /* stage */
 .stage { grid-area: stage; position: relative; touch-action: none; background: var(--stage); border-radius: 10px; display: flex; align-items: center; justify-content: center; overflow: hidden; min-height: 0;
   background-image: radial-gradient(circle at 50% 50%, #16130f 0, var(--stage) 70%); }
-#view { display: block; transform-origin: 50% 50%; will-change: transform; box-shadow: 0 10px 40px #0008; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+/* with media loaded the picture itself is the viewport — no box around it */
+body.has-items .stage { background: none; box-shadow: none; }
+#view { border-radius: 8px; display: block; transform-origin: 50% 50%; will-change: transform; box-shadow: 0 10px 40px #0008; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .stage.picking #view { cursor: crosshair; }
 .stage.picking::after { content: "Tap the image"; position: absolute; top: 12px; right: 12px; font: 11px var(--mono); color: var(--accent); background: #000a; padding: 3px 8px; border-radius: 99px; }
 .cropgrid { position: absolute; pointer-events: none; transform-origin: 50% 50%; z-index: 1; box-shadow: inset 0 0 0 1px #fff9;
@@ -107,13 +109,15 @@ body:not(.has-items) #exportBtn { display: none; }
 .iconbtn svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .iconbtn:active { background: var(--raise); }
 .iconbtn.round { background: #000a; border-radius: 50%; width: 42px; height: 42px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
-.iconbtn.reopen { display: none; }
 .navbtn { position: absolute; top: 50%; transform: translateY(-50%); z-index: 2; width: 40px; height: 64px; border: 0; border-radius: 10px; background: #0009; color: var(--fg); font-size: 30px; line-height: 1; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 .navbtn:active { background: #000c; color: var(--accent); }
 .navbtn.prev { left: 8px; } .navbtn.next { right: 8px; }
 .stage.zoomed .chips::after { content: "Double-tap to reset"; font: 11px var(--mono); color: var(--muted); align-self: center; }
 .stagemsg { position: absolute; margin: 0; padding: 16px; max-width: 420px; text-align: center; color: var(--muted); }
+/* a video keeps 44px under the picture for its bar, centred as one block */
+.stage.vid #view { margin-bottom: 44px; }
 .stagebar { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; }
+.stage.vid .stagebar { left: 50%; right: auto; bottom: auto; transform: translateX(-50%); width: max(var(--vw), 200px); top: calc(50% + (var(--vh) - 44px) / 2 + 6px); }
 .tc { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .empty { max-width: 440px; padding: 24px; display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
@@ -284,7 +288,6 @@ input[type=text] { background: var(--raise); border: 1px solid var(--line); bord
   .reel { min-height: 68px; padding: 8px 8px 6px 2px; }
   .navbtn { width: 34px; height: 54px; font-size: 26px; }
   .navbtn.prev { left: 4px; } .navbtn.next { right: 4px; }
-  .stagebar { left: 8px; right: 8px; bottom: 8px; }
   .toolbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 12; display: flex; gap: 2px; background: var(--bg); border-top: 1px solid var(--line);
     padding: 4px calc(env(safe-area-inset-right, 0px) + 8px) calc(env(safe-area-inset-bottom, 0px) + 4px) calc(env(safe-area-inset-left, 0px) + 8px); }
   .app.sheet-open .toolbar { background: var(--panel); }
@@ -296,11 +299,9 @@ input[type=text] { background: var(--raise); border: 1px solid var(--line); bord
   .panel { position: fixed; left: 0; right: 0; bottom: var(--toolH, 64px); max-height: 46%; border-radius: 16px 16px 0 0; transform: translateY(calc(100% + var(--toolH, 64px) + 20px)); transition: transform .25s; z-index: 10; box-shadow: 0 -12px 40px #000c; }
   .panel.open { transform: none; }
   .panel .tabs { display: none; }
-  /* The open/close arrow sits where a drag handle usually is: top centre of the drawer, or above the tabs when closed. */
+  /* The close arrow sits where a drag handle usually is: top centre of the drawer. */
   .sheethead { display: flex; flex-direction: column; align-items: flex-start; gap: 0; padding: 0 16px 2px; position: relative; touch-action: none; }
   .sheethead #sheetDone { align-self: center; width: 64px; height: 26px; border-radius: 99px; color: var(--muted); }
-  .iconbtn.reopen { display: inline-flex; position: fixed; left: 50%; bottom: calc(var(--toolH, 64px) - 13px); transform: translateX(-50%); z-index: 13; background: var(--raise); color: var(--fg); border: 1px solid var(--line); border-radius: 99px; width: 64px; height: 26px; }
-  .iconbtn.reopen[hidden] { display: none; }
   .sheethead b { flex: 1; font-size: 17px; font-weight: 800; font-stretch: 80%; text-transform: uppercase; letter-spacing: .03em; }
   .scope { padding: 6px 16px 8px; gap: 4px; }
   .seg button { padding: 6px; }
