@@ -2,10 +2,11 @@
 
 ## Engine
 
-- [ ] **16-bit float all the way for RAW.** RAW is developed by LibRaw to 8-bit sRGB before it enters the
-      engine, so exposure and highlight recovery don't get the headroom RAW has. Decode to 16-bit
-      (`outputBps: 16`, linear), upload as `rgba16float`, and keep intermediate targets in float
-      (watch memory on large exports — today's 8-bit targets were chosen for that).
+- [ ] **16-bit float all the way for RAW — the rest.** Process now develops RAW linear in 16-bit
+      (highlights blended, white from LibRaw's auto-bright, up to ~2 stops kept above it), uploads it
+      as `rgba16float`, and grades in float; Exposure and negative Highlights pull the headroom back.
+      Left: Edit still gets 8-bit RAW stills; the look/LUT step and presence/blur helpers still clamp
+      or run in 8-bit; check memory of float exports on phones.
 - [ ] **Glow in Edit: check the look.** Glow now runs the shared multi-step bloom from Process instead
       of the old single-pass approximation — smoother, but it looks different. Compare on real footage
       and tune the defaults (amount, threshold, radius) if needed.

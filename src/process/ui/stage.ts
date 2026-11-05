@@ -1,5 +1,7 @@
 import { Renderer } from '../gpu/renderer';
 import { loadPreview } from '../media';
+import { isLinear, type LinearImage } from '../../shared/media/raw';
+import { fromHalf } from '../../shared/gpu/kit';
 import { S, changed, curItem, curMask, emit, lutById, on, outDims, paramsFor, remember, select, setV } from '../state';
 import { corrAt } from '../stab';
 import { geometry } from '../geo';
@@ -223,6 +225,7 @@ async function sampleImage(e: PointerEvent): Promise<[number, number, number] | 
   if (!it || it.kind === 'video') return sampleVideo(e);
   if (!pickSrc || pickSrc.it !== it) {
     const bm = await loadPreview(it);
+    if (isLinear(bm)) return sampleLinear(bm, e);
     const k = Math.min(1, 1024 / Math.max(bm.width, bm.height));
     const c = new OffscreenCanvas(Math.round(bm.width * k), Math.round(bm.height * k));
     c.getContext('2d')!.drawImage(bm, 0, 0, c.width, c.height);
@@ -236,6 +239,18 @@ async function sampleImage(e: PointerEvent): Promise<[number, number, number] | 
   for (let i = 0; i < d.length; i += 4) { acc[0] += d[i]; acc[1] += d[i + 1]; acc[2] += d[i + 2]; }
   const n = d.length / 4;
   return [acc[0] / n / 255, acc[1] / n / 255, acc[2] / n / 255];
+}
+// a RAW develop: average 5×5 texels in linear light, then the BT.709 curve the renderer applies
+function sampleLinear(img: LinearImage, e: PointerEvent): [number, number, number] {
+  const [u, v] = srcPoint(e);
+  const cx = Math.round(u * img.width), cy = Math.round(v * img.height);
+  const acc = [0, 0, 0];
+  let n = 0;
+  for (let y = Math.max(0, cy - 2); y <= Math.min(img.height - 1, cy + 2); y++)
+    for (let x = Math.max(0, cx - 2); x <= Math.min(img.width - 1, cx + 2); x++, n++)
+      for (let c = 0; c < 3; c++) acc[c] += fromHalf(img.data[(y * img.width + x) * 4 + c]);
+  const rec709 = (x: number) => (x < 0.018 ? 4.5 * x : 1.099 * Math.pow(x, 0.45) - 0.099);
+  return acc.map((s) => Math.min(1, rec709(Math.max(0, s / Math.max(1, n))))) as [number, number, number];
 }
 
 const before = (v: boolean) => { if (S.showBefore === v) return; S.showBefore = v; draw(); };

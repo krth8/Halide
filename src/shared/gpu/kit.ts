@@ -146,3 +146,11 @@ export function toHalf(src: Float32Array): Uint16Array<ArrayBuffer> {
   }
   return out;
 }
+
+/** float16 bits → number (reading a few texels back on the CPU). */
+export function fromHalf(h: number): number {
+  const e = (h >>> 10) & 0x1f, m = h & 0x3ff, sign = h & 0x8000 ? -1 : 1;
+  if (e === 0) return sign * m * 2 ** -24;
+  if (e === 31) return m ? NaN : sign * Infinity;
+  return sign * (1 + m / 1024) * 2 ** (e - 15);
+}

@@ -1,5 +1,9 @@
 import type { Item, Kind } from './model';
-import { isRaw, rawDecode, rawThumb, RAW_EXTENSIONS } from '../shared/media/raw';
+import { isLinear, isRaw, rawDecodeLinear, rawThumb, RAW_EXTENSIONS, type LinearImage } from '../shared/media/raw';
+
+/** A decoded photo: a bitmap, or a RAW develop in linear light (kept in float on the GPU). */
+export type Picture = ImageBitmap | LinearImage;
+export const release = (p: Picture) => { if (!isLinear(p)) p.close(); };
 
 const IMG = /\.(jpe?g|png|webp|avif|heic|heif|gif|bmp|tiff?)$/i;
 const VID = /\.(mov|mp4|m4v|webm|mkv|3gp)$/i;
@@ -103,7 +107,7 @@ async function viaImg(blob: Blob): Promise<ImageBitmap> {
 
 /** Decodes the full image, trying progressively more forgiving routes. Phones can fail a decode under
  *  memory pressure, and files picked on Android can become unreadable after a while. */
-export async function decodeFull(it: Item): Promise<ImageBitmap> {
+export async function decodeFull(it: Item, maxSide = Infinity): Promise<Picture> {
   const fresh = async () => {
     const h = handles.get(it.file);
     if (!h) throw new Error('no folder access');
@@ -112,7 +116,7 @@ export async function decodeFull(it: Item): Promise<ImageBitmap> {
     it.file = f;
     return f;
   };
-  if (isRaw(it.file)) return rawDecode(it.file);
+  if (isRaw(it.file)) return rawDecodeLinear(it.file, { maxSide });
   const tries: (() => Promise<ImageBitmap>)[] = [
     () => createImageBitmap(it.file),
     async () => createImageBitmap(new Blob([await it.file.arrayBuffer()], { type: it.file.type })),
@@ -129,13 +133,14 @@ export async function decodeFull(it: Item): Promise<ImageBitmap> {
 }
 
 /* Full previews (≤ 2048 px) are kept for a handful of items only. */
-const previews = new Map<Item, Promise<ImageBitmap>>();
-export function loadPreview(it: Item): Promise<ImageBitmap> {
+const previews = new Map<Item, Promise<Picture>>();
+export function loadPreview(it: Item): Promise<Picture> {
   let p = previews.get(it);
   if (p) { previews.delete(it); previews.set(it, p); return p; }
   p = (async () => {
-    // RAW: a half-size develop is plenty for a ≤ 2048 px preview
-    const full = isRaw(it.file) ? await rawDecode(it.file, { half: true }) : await createImageBitmap(it.file);
+    // RAW: a half-size develop, in linear light, is plenty for a ≤ 2048 px preview
+    if (isRaw(it.file)) return rawDecodeLinear(it.file, { half: true, maxSide: PREVIEW });
+    const full = await createImageBitmap(it.file);
     const [w, h] = fit(full.width, full.height, PREVIEW);
     if (w === full.width) return full;
     const bm = await createImageBitmap(full, { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' });
@@ -147,7 +152,7 @@ export function loadPreview(it: Item): Promise<ImageBitmap> {
   while (previews.size > 6) {
     const [k, v] = previews.entries().next().value!;
     previews.delete(k);
-    v.then((b) => b.close()).catch(() => {});
+    v.then(release).catch(() => {});
   }
   return p;
 }
@@ -157,7 +162,7 @@ export function trimPreviews(keep?: Item) {
   for (const [k, v] of previews) {
     if (k === keep) continue;
     previews.delete(k);
-    v.then((b) => b.close()).catch(() => {});
+    v.then(release).catch(() => {});
   }
 }
 
