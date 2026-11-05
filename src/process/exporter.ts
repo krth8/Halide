@@ -2,7 +2,7 @@ import type { BufferTarget, VideoCodec } from 'mediabunny';
 import { Renderer } from './gpu/renderer';
 import type { CubeLut } from './cube';
 import type { Item, Params } from './model';
-import { decodeFull } from './media';
+import { decodeFull, release } from './media';
 import { geometry } from './geo';
 import { corrAt } from './stab';
 
@@ -134,20 +134,27 @@ export async function runExport(job: ExportJob): Promise<ExportResult> {
 
 async function exportImage(R: Renderer, it: Item, job: ExportJob) {
   const s = job.settings;
-  let bm = await decodeFull(it);
   const P = job.params(it);
+  // a RAW develop is scaled while still 16-bit, to no more than the output needs
+  let need = R.maxTex;
+  if (it.width && it.height) {
+    const g0 = geometry(it.width, it.height, P), [w0] = outSize(g0.w, g0.h, s, R.maxTex);
+    need = Math.min(need, Math.ceil(Math.max(it.width, it.height) * Math.min(1, w0 / g0.w)));
+  }
+  let bm = await decodeFull(it, need);
   // Output size follows the crop; the source is only scaled down as far as the output needs.
   const g = geometry(bm.width, bm.height, P);
   const [w, h] = outSize(g.w, g.h, s, R.maxTex);
   const k = Math.min(1, w / g.w, R.maxTex / Math.max(bm.width, bm.height));
-  if (k < 0.999) {
+  // (a linear RAW develop stays full size in float: the renderer reads it through its mips)
+  if (k < 0.999 && bm instanceof ImageBitmap) {
     const small = await createImageBitmap(bm, { resizeWidth: Math.max(1, Math.round(bm.width * k)), resizeHeight: Math.max(1, Math.round(bm.height * k)), resizeQuality: 'high' });
     bm.close();
     bm = small;
   }
   R.setSource(bm, bm.width, bm.height);
   R.render(P, w, h, { lut: job.lut(P.lut.id), seed: it.id, masks: it.masks });
-  bm.close();
+  release(bm);
   if (R.canvas.width < w) throw new Error('The image is too large for this device. Choose a smaller export size.');
   const blob = await new Promise<Blob | null>((r) => R.canvas.toBlob(r, MIME[s.format], s.quality / 100));
   if (!blob) throw new Error('Could not encode the image');

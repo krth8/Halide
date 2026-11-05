@@ -9,6 +9,7 @@ import { FMAP } from '../looks';
 import { maskParams, wbGains, type Mask, type Params } from '../model';
 import { geometry, type Corr } from '../geo';
 import type { CubeLut } from '../cube';
+import { isLinear, type LinearImage } from '../../shared/media/raw';
 
 export interface RenderOpts { bypass?: boolean; seed?: number; lut?: CubeLut | null; masks?: Mask[]; corr?: Corr | null }
 
@@ -57,6 +58,7 @@ export class Renderer {
   private readonly fmt!: GPUTextureFormat;
   private src: Target | null = null;
   private own: Target | null = null;                  // texture used by setSource()
+  private linear = false;                             // the source is a linear RAW develop
   private cache = new WeakMap<object, Target>();       // per-item textures (thumbnails)
 
   // `preserve` is kept for the old signature: a WebGPU canvas is read (drawImage / toBlob) in the
@@ -77,11 +79,13 @@ export class Renderer {
     device!.queue.copyExternalImageToTexture({ source: img as GPUCopyExternalImageSource }, { texture: t.tex }, [w, h]);
   }
 
-  /** Upload a new source frame (image bitmap, video element, VideoFrame…). */
-  setSource(img: TexImageSource, w: number, h: number) {
+  /** Upload a new source frame (image bitmap, video element, VideoFrame…, or a linear RAW develop). */
+  setSource(img: TexImageSource | LinearImage, w: number, h: number) {
     if (!device) return;
-    this.own = this.kit.target(this.own, w, h, 'rgba8unorm', true);
-    this.upload(this.own, img, w, h);
+    this.linear = isLinear(img);
+    this.own = this.kit.target(this.own, w, h, this.linear ? 'rgba16float' : 'rgba8unorm', true);
+    if (isLinear(img)) device.queue.writeTexture({ texture: this.own.tex }, img.data, { bytesPerRow: w * 8 }, [w, h]);
+    else this.upload(this.own, img, w, h);
     this.src = this.own;
   }
 
@@ -95,6 +99,7 @@ export class Renderer {
       this.cache.set(key, t);
     }
     this.src = t;
+    this.linear = false;
   }
 
   render(P: Params, W: number, H: number, opts: RenderOpts = {}) {
@@ -125,6 +130,7 @@ export class Renderer {
       grainSize: (P.grainSize * Math.max(W, H)) / 2000,
       seed: opts.seed ?? 0,
       bypass: opts.bypass,
+      linear: this.linear,
     };
     const enc = device!.createCommandEncoder();
     this.arena.reset();

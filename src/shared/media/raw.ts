@@ -6,6 +6,7 @@
 // decode at all), a half-size decode for the on-screen preview, and the full
 // decode only at export.
 import { asset } from '../paths';
+import { toHalf } from '../gpu/kit';
 
 const EXT = ['3fr', 'ari', 'arw', 'bay', 'cr2', 'cr3', 'crw', 'dcr', 'dcs', 'dng', 'erf', 'fff', 'gpr', 'iiq', 'k25', 'kdc', 'mef', 'mos',
   'mrw', 'nef', 'nrw', 'orf', 'pef', 'raf', 'raw', 'rw2', 'rwl', 'sr2', 'srf', 'srw', 'x3f'];
@@ -76,7 +77,58 @@ const bytes = async (f: File) => new Uint8Array(await f.arrayBuffer());
 // develop settings: the camera's white balance and colour matrix into sRGB,
 // highlights clipped (mode 0) as most raw converters' defaults. LibRaw keeps
 // settings from one open() to the next, so every call states size and quality.
-const DEVELOP = { useCameraWb: true, useCameraMatrix: 1, outputColor: 1, outputBps: 8, highlight: 0, halfSize: false, userQual: 3 };
+const DEVELOP = {
+  useCameraWb: true, useCameraMatrix: 1, outputColor: 1, outputBps: 8, highlight: 0, halfSize: false, userQual: 3,
+  gamm: [0.45, 4.5], noAutoBright: false, bright: 1,   // LibRaw's defaults, restated after a linear develop
+};
+// the linear develop: 16-bit, no gamma, no auto-brightening and white at a quarter
+// of the range (2 stops of room above it), highlights blended (mode 2) so a
+// channel that clipped still carries detail from the others
+const LINEAR = { ...DEVELOP, outputBps: 16, gamm: [1, 1], highlight: 2, noAutoBright: true, bright: 0.25 };
+
+/** A RAW develop in linear light (sRGB primaries): rgba16float texels where 1.0
+ *  is the white LibRaw's auto-brightening would pick, and brighter highlights
+ *  stay above 1 instead of clipping. */
+export interface LinearImage { readonly linear: true; width: number; height: number; data: Uint16Array<ArrayBuffer> }
+export const isLinear = (x: unknown): x is LinearImage => !!x && (x as LinearImage).linear === true;
+
+/** Box-filters packed 16-bit pixels down to fit `maxSide`. */
+function shrink(p: Pixels, maxSide: number): Pixels {
+  const s = Math.max(p.width, p.height) / maxSide;
+  if (s <= 1) return p;
+  const ch = p.colors, src = p.data, W = p.width;
+  const w = Math.max(1, Math.round(p.width / s)), h = Math.max(1, Math.round(p.height / s));
+  const out = new Uint16Array(w * h * ch), acc = new Float64Array(ch);
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.floor((y * p.height) / h), y1 = Math.max(y0 + 1, Math.floor(((y + 1) * p.height) / h));
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.floor((x * W) / w), x1 = Math.max(x0 + 1, Math.floor(((x + 1) * W) / w));
+      acc.fill(0);
+      for (let yy = y0; yy < y1; yy++) for (let xx = x0, j = (yy * W + x0) * ch; xx < x1; xx++) for (let c = 0; c < ch; c++) acc[c] += src[j++];
+      const n = (y1 - y0) * (x1 - x0), o = (y * w + x) * ch;
+      for (let c = 0; c < ch; c++) out[o + c] = Math.round(acc[c] / n);
+    }
+  }
+  return { ...p, width: w, height: h, data: out };
+}
+
+/** 16-bit linear pixels → half floats, scaled so dcraw's auto-bright white (the level
+ *  the brightest 1% of the brightest channel reaches) is 1.0. */
+function toLinear(p: Pixels): LinearImage {
+  const n = p.width * p.height, ch = p.colors, src = p.data, hist = new Uint32Array(65536);
+  let white = 1;
+  for (let c = 0; c < Math.min(ch, 3); c++) {
+    hist.fill(0);
+    for (let i = c; i < n * ch; i += ch) hist[src[i]]++;
+    for (let v = 65535, acc = 0; v > 0; v--) if ((acc += hist[v]) > n * 0.01) { white = Math.max(white, v); break; }
+  }
+  const lut = toHalf(Float32Array.from({ length: 65536 }, (_, v) => v / white));
+  const data = new Uint16Array(n * 4), g = ch > 1 ? 1 : 0, b = ch > 2 ? 2 : 0;
+  for (let i = 0, j = 0, o = 0; i < n; i++, j += ch, o += 4) {
+    data[o] = lut[src[j]]; data[o + 1] = lut[src[j + g]]; data[o + 2] = lut[src[j + b]]; data[o + 3] = 0x3c00;
+  }
+  return { linear: true, width: p.width, height: p.height, data };
+}
 
 /** Thumbnail and display size, from the camera's embedded JPEG when there is one. */
 export function rawThumb(file: File): Promise<{ thumb: ImageBitmap; width: number; height: number }> {
@@ -113,5 +165,16 @@ export function rawDecode(file: File, { half = false } = {}): Promise<ImageBitma
     const px = await lr.imageData();
     if (!px) throw new Error('Could not decode the RAW file');
     return toBitmap(px);
+  });
+}
+
+/** Develops the RAW file in linear light with its highlight headroom (see LinearImage),
+ *  no larger than `maxSide`. `half` as for rawDecode. */
+export function rawDecodeLinear(file: File, { half = false, maxSide = Infinity } = {}): Promise<LinearImage> {
+  return job(async (lr) => {
+    await lr.open(await bytes(file), { ...LINEAR, halfSize: half, userQual: half ? 0 : 3 });
+    const px = await lr.imageData();
+    if (!px || px.bits !== 16) throw new Error('Could not decode the RAW file');
+    return toLinear(shrink(px, maxSide));
   });
 }

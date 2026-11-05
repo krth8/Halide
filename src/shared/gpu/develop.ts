@@ -57,6 +57,9 @@ export interface DevelopSpec extends PostSpec {
   lut: { id: string; size: number; data: Float32Array } | null;
   /** show the source through the geometry only (before/after) */
   bypass?: boolean;
+  /** the source is linear light in a float texture (a RAW develop) and may go above 1:
+   *  exposure can pull that headroom back, and the grade works in float */
+  linear?: boolean;
 }
 
 /** Post defaults: everything off. */
@@ -69,7 +72,15 @@ export const hasPost = (p: PostSpec) => !!(p.blur || p.bloom || p.halation || p.
 
 const BAND_H = '0.0, 30.0, 58.0, 115.0, 180.0, 222.0, 270.0, 318.0';
 
-const GRADE = COLOR + CURVE + LUT3D + /* wgsl */`
+/** A linear RAW develop → the BT.709 curve LibRaw's 8-bit output carries, so RAW looks
+ *  the way it did as 8-bit; values above 1 carry on smoothly instead of clipping. */
+const REC709 = /* wgsl */`
+fn rec709(c: vec3f) -> vec3f {
+  let x = max(c, vec3f(0.0));
+  return select(4.5 * x, 1.099 * pow(x, vec3f(0.45)) - 0.099, x >= vec3f(0.018));
+}`;
+
+const GRADE = COLOR + CURVE + LUT3D + REC709 + /* wgsl */`
 struct Grade {
   g0: vec4f, g1: vec4f, g2: vec4f,   // geometry columns
   wb: vec4f,
@@ -94,7 +105,14 @@ const BAND_H = array<f32, 8>(${BAND_H});
   let suv = (M * vec3f(in.uv, 1.0)).xy;
   var c = textureSample(src, srcS, suv).rgb;
   if (any(suv < vec2f(-0.002)) || any(suv > vec2f(1.002))) { c = vec3f(0.0); }
-  c = toGam(toLin(c) * u.wb.xyz);
+  let lin = u.wb.w > 0.5;   // linear float source (RAW), may hold values above 1
+  c = toGam(toLin(select(c, rec709(c), lin)) * u.wb.xyz);
+  // RAW headroom: negative Highlights rolls what is above white back into range,
+  // scaling all three channels together so the hue holds
+  if (lin && u.t0.y < 0.0) {
+    let m = max(c.r, max(c.g, c.b));
+    if (m > 0.8) { c = c * ((0.8 + (m - 0.8) / (1.0 - u.t0.y * 3.75 * (m - 0.8))) / m); }
+  }
   var l = luma(c);
 
   if (u.t1.y > 0.5) {
@@ -164,14 +182,16 @@ const BAND_H = array<f32, 8>(${BAND_H});
   return vec4f(curveLookup(curveT, linS, c), 1.0);
 }`;
 
-const COPY = /* wgsl */`
+const COPY = REC709 + /* wgsl */`
 struct Geo { g0: vec4f, g1: vec4f, g2: vec4f };
 @group(0) @binding(0) var<uniform> u: Geo;
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(2) var srcS: sampler;
 @fragment fn fs(in: VSOut) -> @location(0) vec4f {
   let M = mat3x3f(u.g0.xyz, u.g1.xyz, u.g2.xyz);
-  return vec4f(textureSample(src, srcS, (M * vec3f(in.uv, 1.0)).xy).rgb, 1.0);
+  var c = textureSample(src, srcS, (M * vec3f(in.uv, 1.0)).xy).rgb;
+  if (u.g0.w > 0.5) { c = min(rec709(c), vec3f(1.0)); }   // linear source
+  return vec4f(c, 1.0);
 }`;
 
 /** Darkest channel: the dehaze haze estimate ("dark channel"). */
@@ -367,6 +387,8 @@ export class Develop {
   private lutId: string | null = null;
   private lutSize = 2;
   private black: Target;
+  /** format of the grade's working slots: float for a linear source */
+  private work: GPUTextureFormat = 'rgba8unorm';
 
   constructor(readonly kit: Kit, readonly arena: Arena) {
     this.black = kit.solid([0, 0, 0, 1]);
@@ -375,8 +397,8 @@ export class Develop {
 
   private get device() { return this.kit.device; }
 
-  private slot(name: string, w: number, h: number, mips = true): Target {
-    return (this.slots[name] = this.kit.target(this.slots[name], w, h, 'rgba8unorm', mips));
+  private slot(name: string, w: number, h: number, mips = true, fmt: GPUTextureFormat = 'rgba8unorm'): Target {
+    return (this.slots[name] = this.kit.target(this.slots[name], w, h, fmt, mips));
   }
 
   private makeLut(size: number, data: Float32Array): GPUTexture {
@@ -412,10 +434,13 @@ export class Develop {
     const srcMips = src.mips > 1 && src.w > W * 1.6;
     if (srcMips) kit.genMips(enc, src);
     const srcView = srcMips ? src.mipView : src.view;
+    this.work = spec.linear ? 'rgba16float' : 'rgba8unorm';
 
     if (spec.bypass) {
+      const g = geoCols(spec.base.geo);
+      g[3] = spec.linear ? 1 : 0;
       draw(enc, device, kit.pipeline('dev-copy', COPY, outFmt), out, [
-        { binding: 0, resource: arena.push(new Float32Array(geoCols(spec.base.geo))) },
+        { binding: 0, resource: arena.push(new Float32Array(g)) },
         { binding: 1, resource: srcView }, { binding: 2, resource: kit.trilinear },
       ]);
       return;
@@ -433,7 +458,7 @@ export class Develop {
     for (const m of spec.masks) {
       if (!m.amount) continue;
       const graded = this.grade(enc, spec, m.grade, srcView, W, H, 'm' + (mixes % 2));
-      const o = this.slot('mix' + (mixes++ % 2), W, H);
+      const o = this.slot('mix' + (mixes++ % 2), W, H, true, this.work);
       draw(enc, device, kit.pipeline('dev-mask', MASK, o.fmt), o.view, [
         { binding: 0, resource: arena.push(new Float32Array([m.linear ? 1 : 0, m.invert ? 1 : 0, m.feather, m.amount, m.a[0], m.a[1], m.b[0], m.b[1]])) },
         { binding: 1, resource: base.view }, { binding: 2, resource: graded.view }, { binding: 3, resource: kit.linear },
@@ -515,7 +540,7 @@ export class Develop {
     const t1 = this.slot(key + '1', bw, bh, false);
     const t2 = this.slot(key + '2', bw, bh, false);
     if (lod > 0) kit.genMips(enc, src);
-    const pipe = kit.pipeline('dev-gauss', GAUSS, 'rgba8unorm');
+    const pipe = kit.pipeline('dev-gauss', GAUSS, t1.fmt);
     draw(enc, device, pipe, t1.view, [
       { binding: 0, resource: arena.push(new Float32Array([step / W, 0, lod, 0])) },
       { binding: 1, resource: lod > 0 ? src.mipView : src.view }, { binding: 2, resource: kit.trilinear },
@@ -530,12 +555,12 @@ export class Develop {
   /** One colour grade into a slot, plus presence when used. */
   private grade(enc: GPUCommandEncoder, spec: DevelopSpec, g: GradeSpec, src: GPUTextureView, W: number, H: number, slot: string): Target {
     const { kit, device, arena } = this;
-    const A = this.slot(slot + 'A', W, H);
+    const A = this.slot(slot + 'A', W, H, true, this.work);
     const L = g.look;
     const lutOn = !!spec.lut && g.lutK > 0;
     const u = new Float32Array(4 * (11 + 8));
     u.set(geoCols(g.geo), 0);
-    u.set([...g.wb, 0], 12);
+    u.set([...g.wb, spec.linear ? 1 : 0], 12);
     u.set([g.contrast, g.highlights, g.shadows, g.saturation], 16);
     u.set([g.vibrance, L ? 1 : 0, L?.mono ? 1 : 0, L?.k ?? 0], 20);
     u.set([L?.warm ?? 0, L?.con ?? 0, L?.sat ?? 0, L?.split ?? 0], 24);
@@ -566,7 +591,7 @@ export class Develop {
     }
     if (g.clarity) cla = this.gaussian(enc, A, long * 0.015, slot + 'cla');
     if (g.texture) tex = this.gaussian(enc, A, long * 0.0025, slot + 'tex');
-    const A2 = this.slot(slot + 'A2', W, H);
+    const A2 = this.slot(slot + 'A2', W, H, true, A.fmt as GPUTextureFormat);
     draw(enc, device, kit.pipeline('dev-local', LOCAL, A2.fmt), A2.view, [
       { binding: 0, resource: arena.push(new Float32Array([g.dehaze, g.clarity, g.texture, 0])) },
       { binding: 1, resource: A.view }, { binding: 2, resource: dark.view }, { binding: 3, resource: cla.view },
