@@ -7,6 +7,17 @@ export interface Release { v: string; date: string; title: string; items: { ws: 
 
 export const RELEASES: Release[] = [
   {
+    v: '0.5.0', date: '2026-11-06', title: 'RAW with highlight headroom',
+    items: [
+      { ws: 'process', text: 'RAW photos are developed in 16-bit float. Highlights that used to clip can be brought back with Exposure or Highlights, and gradients are smoother.' },
+      { ws: 'all', text: 'Reconnect a project’s missing files in one tap: pick them all at once and Halide matches each to its clip or photo.' },
+      { ws: 'all', text: 'Allow a folder once and files picked from it come back by themselves next time — useful on Android, which forgets file access between sessions.' },
+      { ws: 'all', text: 'iPhone: the launcher shows how to add Halide to the Home Screen.' },
+      { ws: 'edit', text: 'Phone portrait: the header sits on one row with the tabs below, clear of the camera cutout. Import buttons on the empty Media tab, and a Reconnect button for clips without their original.' },
+      { ws: 'process', text: 'With media loaded the picture itself fills the view, with the video bar right under it.' },
+    ],
+  },
+  {
     v: '0.4.1', date: '2026-10-15', title: 'Fixes',
     items: [
       { ws: 'edit', text: 'A clip added under the playhead shows in the viewer straight away, instead of after the first scrub.' },
