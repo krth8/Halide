@@ -10,9 +10,12 @@ import { FrameServer } from '../media/frameserver.js';
 import { AudioEngine } from './audio.js';
 import { renderTitleCanvas } from './title.js';
 import { stillBitmap } from '../media/still.js';
-// titles and stills have no <video> to drive: they draw a static source and the
-// playhead advances on the wall clock
-const isStatic = (clip) => clip.type === 'title' || clip.type === 'still';
+import { proresFrame } from '../media/prores.js';
+// ProRes plays from the original: frames decoded on the GPU, no <video>
+const isGpuClip = (clip) => getMedia(clip.mediaId)?.codec === 'prores';
+// titles, stills and GPU-decoded clips have no <video> to drive: they draw a
+// source per frame and the playhead advances on the wall clock
+const isStatic = (clip) => clip.type === 'title' || clip.type === 'still' || isGpuClip(clip);
 
 function mkVideo() { const v = document.createElement('video'); v.playsInline = true; v.preload = 'auto'; v.muted = false; return v; }
 
@@ -308,6 +311,12 @@ export class Engine {
   // resolve a clip to a drawable source (video element or rendered title canvas)
   _ensureCanvasSize() { this._sizeCanvas(); }
   _sourceFor(clip) {
+    if (isGpuClip(clip)) {
+      const m = getMedia(clip.mediaId);
+      const srcTime = clip.in + Math.max(0, state.playhead - clip.start) * (clip.speed || 1);
+      const f = proresFrame(m, srcTime, () => { if (!state.playing) this._drawOnce(); });
+      return f ? { source: f, w: f.w, h: f.h } : null;
+    }
     if (clip.type === 'still') {
       // decoded once at the frame's size; until then the previous frame holds
       const m = getMedia(clip.mediaId);

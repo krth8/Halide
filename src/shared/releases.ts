@@ -7,6 +7,13 @@ export interface Release { v: string; date: string; title: string; items: { ws: 
 
 export const RELEASES: Release[] = [
   {
+    v: '0.6.0', date: '2026-11-09', title: 'ProRes without a proxy',
+    items: [
+      { ws: 'edit', text: 'ProRes plays straight from the original, decoded on the graphics card: no proxy to wait for, instant scrubbing, and full 10/12-bit colour into the grade and the export. Works for Proxy, LT, 422, HQ, 4444 and XQ.' },
+      { ws: 'edit', text: 'Sound from ProRes files plays in sync, and audio that is still loading when you press play joins in time instead of starting late.' },
+    ],
+  },
+  {
     v: '0.5.0', date: '2026-11-06', title: 'RAW with highlight headroom',
     items: [
       { ws: 'process', text: 'RAW photos are developed in 16-bit float. Highlights that used to clip can be brought back with Exposure or Highlights, and gradients are smoother.' },
