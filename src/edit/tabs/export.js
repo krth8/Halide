@@ -6,6 +6,8 @@ import { el, fmtTC, toast } from '../util.js';
 import { renderTitleCanvas } from '../timeline/title.js';
 import { mixTimelineAudio, audioClips } from '../timeline/mixer.js';
 import { transcodeRange } from '../media/ffmpeg.js';
+import { proresFrameAsync } from '../media/prores.js';
+import { proresBuffer } from '../timeline/audio.js';
 import { isMcraw, mcrawConformRange } from '../media/mcraw.js';
 import { loadProxy, saveProxy } from '../store.js';
 
@@ -44,7 +46,7 @@ export function refresh() {
       const m = getMedia(s.clip.mediaId);
       if (!m || seen.has(m.id)) continue;
       seen.add(m.id);
-      if (m.playable && m.url) continue;
+      if ((m.playable && m.url) || (m.codec === 'prores' && m.file)) continue;
       if (m.file) conformN++; else missingN++;
     }
   }
@@ -153,6 +155,7 @@ async function render() {
     for (const tr of state.tracks.video) for (const c of tr.clips) {
       if (c.type === 'title' || c.type === 'still') continue;   // stills decode straight from the file
       const m = getMedia(c.mediaId); if (!m) continue;
+      if (m.codec === 'prores' && m.file) continue;  // decoded on the GPU from the original
       if (m.playable && m.url) continue;             // WebCodecs/native path
       if (!m.file) { missing.add(m.name); continue; }
       need.push({ c, m });
@@ -204,7 +207,8 @@ async function render() {
       // decodeAudioData can't read .mcraw — its proxy carries the clip's AAC
       const src = isMcraw(media?.name) ? (media.proxyBlob || null) : (media.file || media.proxyBlob || null);
       let buf = null;
-      if (src) { try { buf = await actx.decodeAudioData(await src.arrayBuffer()); } catch { buf = null; } }
+      if (media.codec === 'prores') { try { buf = await proresBuffer(actx, media); } catch { buf = null; } }
+      else if (src) { try { buf = await actx.decodeAudioData(await src.arrayBuffer()); } catch { buf = null; } }
       audioCache.set(media.id, buf); return buf;
     };
     try { audioBuf = await mixTimelineAudio(dur, decodeFor, 48000); } catch (e) { audioBuf = null; }
@@ -260,6 +264,11 @@ async function render() {
       return bmp ? { source: bmp, w: bmp.width, h: bmp.height } : null;
     }
     if (clip.type === 'title') { const cv = renderTitleCanvas(clip.title, W, H, { tl: Math.max(0, t - clip.start), dur: clipTLDur(clip) }); return { source: cv, w: cv.width, h: cv.height }; }
+    const pm = getMedia(clip.mediaId);
+    if (pm?.codec === 'prores') {
+      const f = await proresFrameAsync(pm, clip.in + Math.max(0, t - clip.start) * (clip.speed || 1));
+      return f ? { source: f, w: f.w, h: f.h } : null;
+    }
     const v = await layerFrame(clip, t); if (!v || !v.videoWidth) return null;
     return { source: v, w: v.videoWidth, h: v.videoHeight };
   };

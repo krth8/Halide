@@ -189,6 +189,48 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_index) li: u
   }
 }`;
 
+/** Y'CbCr code values → R'G'B' (display-encoded, superwhites kept above 1). */
+const RGB = /* wgsl */`
+struct C { m: vec4f, s: vec4f };   // Kr, Kb, chroma444, scale (1 or 4)
+@group(0) @binding(0) var<uniform> c: C;
+@group(0) @binding(1) var Y: texture_2d<f32>;
+@group(0) @binding(2) var U: texture_2d<f32>;
+@group(0) @binding(3) var V: texture_2d<f32>;
+struct O { @builtin(position) pos: vec4f };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> O {
+  var o: O;
+  let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  o.pos = vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+  return o;
+}
+@fragment fn fs(o: O) -> @location(0) vec4f {
+  let p = vec2i(o.pos.xy);
+  let y = (textureLoad(Y, p, 0).r / c.m.w - 64.0) / 876.0;
+  var cb: f32; var cr: f32;
+  if (c.m.z > 0.5) { cb = textureLoad(U, p, 0).r; cr = textureLoad(V, p, 0).r; }
+  else {
+    // 4:2:2 chroma is co-sited with the even luma columns: odd columns take the average
+    let cw = i32(textureDimensions(U).x);
+    let x0 = p.x >> 1; let x1 = min(x0 + (p.x & 1), cw - 1);
+    cb = 0.5 * (textureLoad(U, vec2i(x0, p.y), 0).r + textureLoad(U, vec2i(x1, p.y), 0).r);
+    cr = 0.5 * (textureLoad(V, vec2i(x0, p.y), 0).r + textureLoad(V, vec2i(x1, p.y), 0).r);
+  }
+  cb = (cb / c.m.w - 512.0) / 896.0; cr = (cr / c.m.w - 512.0) / 896.0;
+  let kr = c.m.x; let kb = c.m.y; let kg = 1.0 - kr - kb;
+  let r = y + 2.0 * (1.0 - kr) * cr;
+  let b = y + 2.0 * (1.0 - kb) * cb;
+  let g = (y - kr * r - kb * b) / kg;
+  return vec4f(max(vec3f(r, g, b), vec3f(0.0)), 1.0);
+}`;
+
+/** Luma weights for the frame's matrix code (unspecified: BT.709 for HD, BT.601 below). */
+export function lumaWeights(matrix: number, height: number): [number, number] {
+  if (matrix === 9 || matrix === 10) return [0.2627, 0.0593];
+  if (matrix === 5 || matrix === 6) return [0.299, 0.114];
+  if (matrix === 1) return [0.2126, 0.0722];
+  return height >= 720 ? [0.2126, 0.0722] : [0.299, 0.114];
+}
+
 export class ProResDecoder {
   private pipe: GPUComputePipeline;
   private params: GPUBuffer;
@@ -264,7 +306,38 @@ export class ProResDecoder {
     return { ...this.planes, frame: f };
   }
 
+  private rgbPipes = new Map<string, GPURenderPipeline>();
+  private rgbParams: GPUBuffer | null = null;
+
+  /** Converts decoded planes to R'G'B' into `view` (a render target the planes' size). */
+  toRGB(enc: GPUCommandEncoder, pl: Planes, view: GPUTextureView, format: GPUTextureFormat) {
+    const { device } = this;
+    let pipe = this.rgbPipes.get(format);
+    if (!pipe) {
+      const module = device.createShaderModule({ label: 'prores-rgb', code: RGB });
+      pipe = device.createRenderPipeline({
+        label: 'prores-rgb', layout: 'auto',
+        vertex: { module, entryPoint: 'vs' }, fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+        primitive: { topology: 'triangle-list' },
+      });
+      this.rgbPipes.set(format, pipe);
+    }
+    this.rgbParams ??= device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const f = pl.frame, [kr, kb] = lumaWeights(f.matrix, f.height);
+    device.queue.writeBuffer(this.rgbParams, 0, new Float32Array([kr, kb, f.chroma444 ? 1 : 0, f.bits === 12 ? 4 : 1, 0, 0, 0, 0]));
+    const bg = device.createBindGroup({
+      layout: pipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.rgbParams } },
+        { binding: 1, resource: pl.y.createView() }, { binding: 2, resource: pl.u.createView() }, { binding: 3, resource: pl.v.createView() },
+      ],
+    });
+    const pass = enc.beginRenderPass({ colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] });
+    pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.draw(3); pass.end();
+  }
+
   destroy() {
+    this.rgbParams?.destroy();
     this.bits?.destroy(); this.slices?.destroy(); this.params.destroy(); this.tabs.destroy();
     this.planes?.y.destroy(); this.planes?.u.destroy(); this.planes?.v.destroy();
   }

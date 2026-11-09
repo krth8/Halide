@@ -10,6 +10,7 @@ import { COLOR, VIGNETTE } from '../../shared/gpu/wgsl.ts';
 import { gpuDevice } from '../../shared/gpu/device.ts';
 import { Kit, Arena, draw } from '../../shared/gpu/kit.ts';
 import { Develop, hasPost } from '../../shared/gpu/develop.ts';
+import { ProResDecoder } from '../../shared/codec/prores/decoder.ts';
 
 // row-major 3x3 -> WGSL mat3x3 constructor (column vectors)
 const m3 = (M) => `mat3x3<f32>(vec3(${M[0]}, ${M[3]}, ${M[6]}), vec3(${M[1]}, ${M[4]}, ${M[7]}), vec3(${M[2]}, ${M[5]}, ${M[8]}))`;
@@ -397,11 +398,13 @@ export class Renderer {
     this.ctx.configure({ device: this.device, format: this.format, alphaMode: 'opaque' });
   }
 
-  _ensureSrcTex(w, h) {
-    if (this.srcTex && this.srcSize[0] === w && this.srcSize[1] === h) return;
+  _ensureSrcTex(w, h, format = 'rgba8unorm') {
+    if (this.srcTex && this.srcSize[0] === w && this.srcSize[1] === h && this.srcFormat === format) return;
     this.srcTex?.destroy?.();
+    this.srcFormat = format;
+    this._proresKey = null;
     this.srcTex = this.device.createTexture({
-      size: [w, h], format: 'rgba8unorm',
+      size: [w, h], format,
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
     });
     this.srcSize = [w, h];
@@ -636,7 +639,23 @@ export class Renderer {
     const post = this._postSpec();
     const extPipe = post ? this.pipelineExtOff : this.pipelineExt;
     let pipeline = null, bind = null;
-    if (isVideo && this.extOK && extPipe) {
+    if (source && source.prores) {
+      // ProRes frame bytes: decoded on the GPU into a float source (10/12-bit kept)
+      this._ensureSrcTex(w, h, 'rgba16float');
+      if (this._proresKey !== source.key) {
+        this._proresDec ??= new ProResDecoder(this.device);
+        const enc0 = this.device.createCommandEncoder();
+        try {
+          const pl = this._proresDec.decode(enc0, source.bytes, source.bits);
+          this._proresDec.toRGB(enc0, pl, this.srcTex.createView(), 'rgba16float');
+        } catch (e) { console.warn('[prores] frame failed', e?.message || e); return false; }
+        this.device.queue.submit([enc0.finish()]);
+        this._proresKey = source.key;
+      }
+      this.srcMode = 'prores';
+      pipeline = post ? this.pipelineOff : this.pipeline; bind = this._bind(pipeline);
+    }
+    if (!bind && isVideo && this.extOK && extPipe) {
       try {
         bind = this._bindExt(this.device.importExternalTexture({ source }), extPipe);
         pipeline = extPipe;
@@ -649,6 +668,7 @@ export class Renderer {
     }
     if (!bind) {
       this._ensureSrcTex(w, h);
+      this._proresKey = null;   // the source texture now holds something else
       try {
         this.device.queue.copyExternalImageToTexture({ source, flipY: false }, { texture: this.srcTex }, [w, h]);
         this.srcMode = 'copy';

@@ -11,6 +11,7 @@ import { proxyKey, isCurrentProxyKey, loadProxy, saveProxy, proxyBytes, clearPro
 import { findLut, LUT_CATEGORIES } from '../luts.js';
 import { ffmpegLoaded, ffmpegMultithread, abortTranscode } from '../media/ffmpeg.js';
 import { isMcraw, openMcraw } from '../media/mcraw.js';
+import { probeProRes, proresThumb } from '../media/prores.js';
 import { grantFor, offerLibrary, openRef, place } from '../../shared/media/library.ts';
 
 let engine = null;
@@ -235,6 +236,19 @@ async function importFiles(files, { explicit = true, targets = null } = {}) {
       bus.emit('media:changed');
       if (relink) toast('Re-linked ' + file.name);
       if (autoProxyFor(m) && !m.proxyReady) queueProxy(m, false);
+      continue;
+    }
+    // ProRes: played from the original, decoded on the GPU — no proxy
+    const pr = await probeProRes(file).catch(() => null);
+    if (pr) {
+      m.codec = 'prores'; m.playable = true;
+      m.width = pr.width; m.height = pr.height; m.duration = pr.duration; m.fps = pr.fps;
+      if (m.proxyStatus === 'queued') m.proxyStatus = '';
+      updateCard(m);
+      try { m.thumb = await proresThumb(file, pr.mov, Math.min(1, pr.duration / 2)); } catch (e) { console.warn('[import] prores thumb failed', file.name, e); }
+      updateCard(m);
+      bus.emit('media:changed');
+      if (relink) toast('Re-linked ' + file.name);
       continue;
     }
     try {
@@ -502,7 +516,7 @@ let scrubV = null;
 // build (once) the persisted 10-frame filmstrip for a clip — proxy preferred,
 // original as fallback. media:changed persists it via autosave.
 export async function ensureStrip(m) {
-  if (m.strip || m._stripBusy || m.kind === 'image') return;
+  if (m.strip || m._stripBusy || m.kind === 'image' || m.codec === 'prores') return;
   const src = m.proxyBlob || ((m.playable && m.file) ? m.file : null);
   if (!src) return;
   m._stripBusy = true;
@@ -867,7 +881,7 @@ export async function restore(proj) {
       id: pm.id, name: pm.name, size: pm.size, path: pm.path || '', file: null, url: null,
       width: pm.width, height: pm.height, duration: pm.duration, thumb: pm.thumb,
       strip: pm.strip || null, handle: pm.handle || null, lib: pm.lib || null,
-      kind: pm.kind || 'video',
+      kind: pm.kind || 'video', codec: pm.codec || null, fps: pm.fps || 0,
       proxyKey: pm.proxyKey || null, proxyW: pm.proxyW, proxyH: pm.proxyH,
       proxyReady: false, proxyStatus: 'unlinked',
     };
@@ -1064,6 +1078,8 @@ function thumbIsBlack(dataUrl) {
 const adoptHandleFile = async (m) => adoptFile(m, await m.handle.getFile());
 async function adoptFile(m, f) {
   m.file = f;
+  // projects from before GPU ProRes switch over once the original is back
+  if (!m.codec && m.kind === 'video' && (await probeProRes(f).catch(() => null))) m.codec = 'prores';
   // playable isn't persisted — probe again rather than assume, so an HEVC
   // original isn't treated as natively decodable (by export or the proxy mode)
   const meta = await probe(f).catch(() => null);
@@ -1076,6 +1092,7 @@ async function adoptFile(m, f) {
 // whether the auto-proxy setting wants a proxy for this clip (after probing)
 function autoProxyFor(m) {
   if (m.kind === 'image') return false;   // stills decode at display size
+  if (m.codec === 'prores') return false; // decoded on the GPU from the original
   const mode = el('autoProxy')?.value || 'unsupported';
   if (mode === 'all') return true;
   if (mode === 'unsupported') return !m.playable || isMcraw(m.name);

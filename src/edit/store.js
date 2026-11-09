@@ -42,6 +42,7 @@ function serialize(state) {
     width: m.width, height: m.height, duration: m.duration, thumb: m.thumb,
     strip: m.strip || null,
     kind: m.kind || 'video',   // 'audio' = music import: no picture, no proxy
+    codec: m.codec || null, fps: m.fps || 0,   // 'prores' = decoded on the GPU, no proxy
     rawIso: m.rawIso || 0, rawShutter: m.rawShutter || 0,
     inputTransform: m.inputTransform || null,
     proxyKey: m.proxyKey || null, proxyW: m.proxyW, proxyH: m.proxyH,
