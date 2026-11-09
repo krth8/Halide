@@ -15,6 +15,15 @@
       lift/gamma/gain wheels, HSL curves and log input transforms. Decide whether the two UIs should
       converge (e.g. Process tone sliders in Edit's Adjust, HSL curves in Process) or stay separate.
 
+- [ ] **ProRes and DNxHR decoded on the GPU (Edit).** Both are intra-only DCT codecs cut into thousands
+      of independent slices: parse frames on the CPU, entropy-decode each slice, then dequantise and
+      inverse-DCT in WebGPU compute shaders. Gives direct 4K playback without a proxy, instant
+      scrubbing (every frame is a keyframe) and full 10/12-bit into the float pipeline. ProRes 422 first,
+      then 4444, then DNxHR; keep the proxy as the fallback for phones and weak GPUs. Measured today
+      (ffmpeg.wasm, 4 cores, 4K): ProRes HQ decodes at ~13 fps, DNxHR HQX at ~15 fps.
+      Not for HEVC: CABAC and inter prediction don't parallelise on a GPU; HEVC 4:2:2 10-bit (Canon
+      C-Log) is fast only through hardware decode (Apple Silicon, Intel 11th gen+, newer NVIDIA) via WebCodecs.
+
 ## Process
 
 - [ ] **Copy / paste settings to selected items.** Multi-select in the film strip (Ctrl/Shift-click on
